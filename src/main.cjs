@@ -24,7 +24,7 @@ const ownLock = app.requestSingleInstanceLock();
 if (!ownLock) app.quit();
 
 let petWindow, panelWindow, tray, store, history, request, unwatch, currentShortcut = '', cursorTimer;
-let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, positionTimer, idleTimer;
+let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
 let runtime = { shortcut: '', startup: '', error: '' };
 let appliedTheme;
 
@@ -200,10 +200,17 @@ function setupIPC() {
   on('pet:menu', () => contextMenu().popup({ window: petWindow }));
   on('pet:hide', hidePet);
   on('pet:hit', over => { if (typeof over === 'boolean' && !dragOrigin) petWindow.setIgnoreMouseEvents(!over, { forward: true }); });
-  on('pet:drag-start', () => { petWindow.setIgnoreMouseEvents(false); dragOrigin = { cursor: screen.getCursorScreenPoint(), bounds: petWindow.getBounds() }; });
+  on('pet:drag-start', () => { petWindow.setIgnoreMouseEvents(false); dragOrigin = { cursor: screen.getCursorScreenPoint(), bounds: petWindow.getBounds() }; dragLastCursorX = dragOrigin.cursor.x; });
   on('pet:drag', () => {
     if (!dragOrigin) return;
     const cursor = screen.getCursorScreenPoint();
+    // 用系统光标坐标判断方向：窗口跟随拖动时会改变指针在窗口内的坐标，
+    // 渲染进程的 screenX 增量在窗口追上光标的过程中会抖动，导致停下后误判为向右。
+    const step = cursor.x - dragLastCursorX;
+    if (Math.abs(step) >= 3) {
+      send(petWindow, 'pet:drag-direction', step < 0 ? 'running-left' : 'running-right');
+      dragLastCursorX = cursor.x;
+    }
     const point = clampPoint({ x: dragOrigin.bounds.x + cursor.x - dragOrigin.cursor.x, y: dragOrigin.bounds.y + cursor.y - dragOrigin.cursor.y }, petSize());
     petWindow.setPosition(point.x, point.y);
   });

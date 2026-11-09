@@ -1,7 +1,7 @@
 const sprite = document.querySelector('#sprite'), scene = document.querySelector('#scene'), bubble = document.querySelector('#bubble');
 const names = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review'];
 const times = [[1680,660,660,840,840,1920],[120,120,120,120,120,120,120,220],[120,120,120,120,120,120,120,220],[140,140,140,280],[140,140,140,140,280],[140,140,140,140,140,140,140,240],[150,150,150,150,150,260],[120,120,120,120,120,220],[150,150,150,150,150,280]];
-let config, state = 'idle', row = 0, frame = 0, next = 0, hover = false, drag = false, moved = false, lastX = 0, lastY = 0, direction = null, bubbleTimer, clickTimer;
+let config, state = 'idle', row = 0, frame = 0, next = 0, hover = false, drag = false, moved = false, dragStartX = 0, dragStartY = 0, direction = null, bubbleTimer, clickTimer;
 function cell(r,c) { sprite.style.backgroundPosition = `${-c*192}px ${-r*208}px`; }
 function choose(name) { const r = Math.max(0, names.indexOf(name)); if (row !== r) { row = r; frame = 0; next = 0; } }
 function say(text) { if (!text) return; clearTimeout(bubbleTimer); bubble.textContent = text; bubble.classList.add('visible'); bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), 6500); }
@@ -27,12 +27,14 @@ sprite.addEventListener('pointerenter', () => { hover = true; next = 0; });
 sprite.addEventListener('pointerleave', () => { hover = false; next = 0; });
 sprite.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
-  drag = true; moved = false; lastX = e.screenX; lastY = e.screenY; sprite.setPointerCapture(e.pointerId); window.dragon.send('pet:drag-start');
+  drag = true; moved = false; dragStartX = e.screenX; dragStartY = e.screenY; sprite.setPointerCapture(e.pointerId); window.dragon.send('pet:drag-start');
 });
 sprite.addEventListener('pointermove', e => {
   if (!drag) return;
-  const dx = e.screenX-lastX;
-  if (Math.abs(dx) > 3 || Math.abs(e.screenY-lastY) > 3 || moved) { moved = true; choose(dx < 0 ? 'running-left' : 'running-right'); window.dragon.send('pet:drag'); lastX = e.screenX; lastY = e.screenY; }
+  if (!moved && Math.abs(e.screenX-dragStartX) <= 3 && Math.abs(e.screenY-dragStartY) <= 3) return;
+  moved = true;
+  // 方向由主进程按系统光标位移判断，这里只负责驱动窗口跟随。
+  window.dragon.send('pet:drag');
 });
 function release(e) {
   if (!drag) return;
@@ -53,6 +55,7 @@ document.querySelector('#chat').onclick = () => window.dragon.send('panel:open',
 document.querySelector('#settings').onclick = () => window.dragon.send('panel:open','settings');
 document.querySelector('#hide').onclick = () => window.dragon.send('pet:hide');
 window.dragon.on('pet:state', payload => { state = payload.state; choose(state); say(payload.bubble); });
+window.dragon.on('pet:drag-direction', name => { if (drag) choose(name); });
 window.dragon.on('pet:cursor', point => { const s = config?.pet.scale || 1, dx = point.x/s-145, dy = point.y/s-210; direction = Math.round(((Math.atan2(dx,-dy)*180/Math.PI+360)%360)/22.5)%16; });
 window.dragon.on('config:updated', configure);
 window.dragon.invoke('bootstrap').then(data => { configure(data.config); state = data.state; sprite.dataset.loaded = 'true'; requestAnimationFrame(animate); }).catch(error => { window.__bootError = error.message; say(error.message); });

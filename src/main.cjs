@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, globalShortcut, screen, shell, dialog } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { ConfigStore, atomicWrite } = require('./config.cjs');
 const { History } = require('./history.cjs');
@@ -66,6 +67,15 @@ function setShortcut(accelerator) {
     else runtime.shortcut = `${accelerator} 被占用，请换一个组合；托盘仍然可用`;
   } catch { runtime.shortcut = '快捷键格式无效，请检查设置'; }
 }
+const LOGIN_ITEM_NAME = 'DragonDesk';
+function windowsLoginItemExists(name) {
+  try {
+    execFileSync('reg.exe', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', name], { stdio: 'ignore', windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
 function setStartup(enabled) {
   if (smoke) { runtime.startup = '测试模式，不修改开机启动'; return; }
   if (process.platform === 'darwin' && !app.isPackaged) {
@@ -76,12 +86,22 @@ function setStartup(enabled) {
   if (process.platform === 'win32') {
     settings.path = process.execPath;
     settings.args = [...(app.isPackaged ? [] : [appRoot]), `--config=${configPath}`, '--autostart'];
-    settings.name = 'DragonDesk';
+    settings.name = LOGIN_ITEM_NAME;
   }
-  if (enabled || app.getLoginItemSettings(process.platform === 'win32' ? { path: settings.path, args: settings.args } : {}).openAtLogin) app.setLoginItemSettings(settings);
-  const actual = app.getLoginItemSettings(process.platform === 'win32' ? { path: settings.path, args: settings.args } : {}).openAtLogin;
+  // 开启和关闭都必须调用 setLoginItemSettings。关闭时如果先查询再决定是否删除，
+  // 旧路径、旧格式或手动写入的登录项会因为查询匹配不上而被漏掉，
+  // 出现“设置已关闭但登录时仍自动启动”。
+  app.setLoginItemSettings(settings);
+  // Windows 直接查注册表，不依赖 getLoginItemSettings 的参数格式匹配。
+  const actual = process.platform === 'win32'
+    ? windowsLoginItemExists(LOGIN_ITEM_NAME)
+    : app.getLoginItemSettings().openAtLogin;
   runtime.startup = actual ? '已开启登录后启动' : '未开启';
-  if (enabled && !actual) throw new Error('系统没有接受开机自启设置，请检查登录项设置。');
+  if (enabled !== actual) {
+    throw new Error(enabled
+      ? '系统没有接受开机自启设置，请检查登录项设置。'
+      : '未能移除开机自启项，请手动检查系统登录项。');
+  }
 }
 function applyConfig({ startup = false } = {}) {
   runtime.error = '';

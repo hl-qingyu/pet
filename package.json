@@ -1,0 +1,55 @@
+{
+  "name": "dragon-desk",
+  "version": "1.0.5",
+  "description": "独立的龙娘桌宠，支持 OpenAI / DeepSeek / 兼容 API",
+  "author": "Dragon Desk contributors",
+  "license": "MIT",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.cjs",
+    "test": "node --test test/*.test.cjs",
+    "test:ui": "node scripts/smoke.cjs",
+    "test:packaged": "node scripts/smoke.cjs --packaged",
+    "build:win": "electron-builder --win dir --x64",
+    "build:mac": "electron-builder --mac zip --arm64 --x64"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.dragondesk.pet",
+    "productName": "DragonDesk",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "config.example.json",
+      "README.md",
+      "LICENSE",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "dir"
+      ],
+      "icon": "assets/icon.ico",
+      "signExecutable": false
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.entertainment",
+      "identity": null
+    },
+    "artifactName": "DragonDesk-${version}-${os}-${arch}.${ext}"
+  }
+}

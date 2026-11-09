@@ -1,0 +1,51 @@
+<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>DragonDesk · 聊天与设置</title><link rel="stylesheet" href="themes.css"><link rel="stylesheet" href="panel.css"></head>
+<body>
+<aside class="rail">
+  <div class="brand"><div class="brand-icon">✧</div><div>DragonDesk<small>给桌面一点陪伴</small></div></div>
+  <div class="portrait"><div class="portrait-sprite"></div></div>
+  <h1 id="rail-name">小龙</h1><p class="rail-note">独立运行，随时在这里。</p>
+  <nav><button class="nav active" data-page="chat"><span>◌</span> 聊一聊</button><button class="nav" data-page="settings"><span>⚙</span> 伙伴设置</button></nav>
+  <div class="rail-bottom"><span class="dot"></span><span id="backend-label">DeepSeek</span><small>API 直接连接</small></div>
+</aside>
+<main>
+  <section id="chat-page" class="page">
+    <header><div><p class="eyebrow">A LITTLE COMPANY</p><h2>今天，想聊些什么？</h2></div><button class="subtle" id="clear-chat">清空聊天</button></header>
+    <div id="messages" aria-live="polite"></div>
+    <template id="welcome-template"><div id="welcome" class="welcome"><div class="sparkle">✦</div><h3>你的桌边，有一位伙伴。</h3><p>说说今天的心情，或者一起想个办法。<br>首次使用请在伙伴设置中填好 API。</p><div class="suggestions"><button>今天有点累，陪我聊聊</button><button>帮我安排一个专注的下午</button></div></div></template>
+    <div id="chat-error" class="error hidden" role="alert"></div>
+    <footer class="composer"><div class="compose-box"><textarea id="message" rows="2" maxlength="16000" placeholder="和小龙说点什么……" aria-label="聊天内容"></textarea><button id="send" class="primary" title="发送">发送 ↑</button><button id="stop" class="hidden" title="停止回复">停止 ■</button></div><div class="compose-meta"><span id="chat-status">准备好就来聊聊吧</span><span>Enter 发送 · Shift + Enter 换行</span></div></footer>
+  </section>
+  <section id="settings-page" class="page hidden">
+    <header><div><p class="eyebrow">MAKE IT YOURS</p><h2>让陪伴，合你的心意。</h2></div><button id="save" class="primary">保存设置</button></header>
+    <div id="settings-message" role="status" class="notice hidden"></div>
+    <div class="settings-body">
+      <article class="card"><div class="card-heading"><span>01</span><h3>名字与性格</h3><span id="character-label" class="badge"></span></div>
+        <p class="hint" id="character-hint"></p>
+        <label>她的名字<input id="pet-name" maxlength="50"></label>
+        <label>性格与说话方式<textarea id="personality" rows="4" maxlength="16000"></textarea></label>
+        <label>点击时的互动台词 <small>每行一句，不调用 API</small><textarea id="greetings" rows="3"></textarea></label>
+      </article>
+      <article class="card"><div class="card-heading"><span>02</span><h3>聊天接口</h3><span id="key-badge" class="badge">待配置</span></div>
+        <div class="two"><label>接口配置<select id="provider"></select></label><label>协议<select id="protocol"><option value="chat-completions">Chat Completions</option><option value="responses">Responses（Codex / OpenAI）</option></select></label></div>
+        <label>接口地址<input id="base-url" placeholder="https://api.deepseek.com"></label>
+        <div class="two"><label>模型名称<input id="model" placeholder="填写平台支持的模型 ID"></label><label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="填写你的接口密钥"></label></div>
+        <p class="hint" id="theme-hint"></p>
+        <div class="two"><label>推理参数格式<select id="reasoning-format"><option value="openai">OpenAI / Codex</option><option value="deepseek">DeepSeek</option></select></label><label>推理强度<select id="reasoning-effort"></select></label></div>
+        <p class="hint" id="reasoning-hint">请按模型支持的档位选择；不确定时使用模型默认。</p>
+        <p class="hint">模型名按你的 API 平台填写。密钥仅保存在本机配置中，请勿分享配置文件。</p>
+        <details><summary>请求选项</summary><label>附加请求参数（JSON）<textarea id="extra-body" rows="3" spellcheck="false"></textarea></label><div class="two"><label>输出上限<input id="max-tokens" type="number" min="128" max="32768"></label><label>请求超时（秒）<input id="timeout" type="number" min="10" max="600"></label></div></details>
+      </article>
+      <article class="card"><div class="card-heading"><span>03</span><h3>桌面与启动</h3></div>
+        <div class="toggles"><label class="toggle"><span>开机自启<small>登录电脑后启动 DragonDesk</small></span><input id="autostart" type="checkbox"></label><label class="toggle"><span>桌宠保持置顶<small>聊天和设置窗口不置顶</small></span><input id="always-top" type="checkbox"></label><label class="toggle"><span>视线跟随鼠标</span><input id="follow" type="checkbox"></label><label class="toggle"><span>启动时显示桌宠</span><input id="show-on-launch" type="checkbox"></label><label class="toggle"><span>保存聊天记录<small>保存在这台电脑上</small></span><input id="save-history" type="checkbox"></label></div>
+        <div class="two"><label>桌宠大小 <output id="scale-label">85%</output><input id="scale" type="range" min="0.65" max="2" step="0.05" value="0.85"></label><label>主动气泡间隔（分钟）<input id="idle-minutes" type="number" min="0" max="1440"><small>0 为关闭，不调用 API</small></label></div>
+        <label>显示 / 隐藏快捷键<input id="shortcut" spellcheck="false" placeholder="CommandOrControl+Alt+Shift+D"></label>
+        <p class="hint" id="shortcut-status"></p><p class="hint" id="startup-status"></p>
+      </article>
+      <div class="config-footer"><div><strong>所有设置，一个配置文件。</strong><code id="config-path"></code></div><button id="open-config" class="subtle">打开配置文件 ↗</button></div>
+    </div>
+  </section>
+</main><div id="confirm-clear" class="dialog-backdrop hidden"><div class="dialog"><h3>清空这段聊天？</h3><p>会清除本机记录和后续聊天上下文。</p><div><button id="cancel-clear">保留</button><button id="confirm-clear-button" class="primary">清空</button></div></div></div>
+<script src="themes.js"></script><script src="panel.js"></script></body></html>

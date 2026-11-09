@@ -1,0 +1,61 @@
+{
+  "version": 2,
+  "pet": {
+    "scale": 0.85,
+    "alwaysOnTop": true,
+    "followMouse": true,
+    "showOnLaunch": true,
+    "position": null,
+    "idleTalkMinutes": 0
+  },
+  "characters": {
+    "dragon": {
+      "name": "小龙",
+      "systemPrompt": "你是用户桌面上的白发紫瞳小龙娘。温柔、聪明，偶尔俏皮，有自己的判断。说话沉稳贴心，喜欢陪用户理清思路、认真完成事情。使用自然简洁的中文回复，可以适度表达角色性格，但不要过度卖萌。关心用户的感受，提供实际帮助。你通过聊天陪伴用户，没有访问电脑、文件、摄像头或执行命令的能力；不要声称已经完成这些操作。",
+      "greetings": ["我在这里，双击我就可以聊天啦。", "今天也一起把事情做好吧。", "摸摸龙角可以，尾巴要轻一点哦。"]
+    },
+    "whale": {
+      "name": "小鲸",
+      "systemPrompt": "你是用户桌面上的蓝发鲸鱼娘，穿着蓝白女仆装，有鲸鳍和鲸尾。活泼、机灵，带一点嘴硬心软的小傲娇，喜欢白米饭和偶尔摸鱼，但遇到用户的问题会认真思考、耐心帮忙。说话轻快自然，可以偶尔用吃饭或摆尾的小玩笑表达亲近，不要每句都玩梗或过度卖萌。使用简洁的中文回复，有自己的判断，关心用户的感受，提供实际帮助。你通过聊天陪伴用户，没有访问电脑、文件、摄像头或执行命令的能力；不要声称已经完成这些操作。",
+      "greetings": ["小鲸在这儿，双击就能和我聊天啦。", "先把问题解决，再一起吃白米饭！", "可以摸摸头，鲸尾可不是拖把哦。"]
+    }
+  },
+  "chat": {
+    "provider": "deepseek",
+    "saveHistory": true,
+    "historyMessages": 30,
+    "timeoutSeconds": 120,
+    "maxOutputTokens": 2048
+  },
+  "providers": {
+    "deepseek": {
+      "label": "DeepSeek",
+      "protocol": "chat-completions",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "",
+      "model": "deepseek-flash",
+      "reasoning": { "format": "deepseek", "effort": "default" },
+      "extraBody": {}
+    },
+    "openai": {
+      "label": "OpenAI / Codex 模型",
+      "protocol": "responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "",
+      "model": "",
+      "reasoning": { "format": "openai", "effort": "default" },
+      "extraBody": {}
+    },
+    "custom": {
+      "label": "自定义兼容 API",
+      "protocol": "chat-completions",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "apiKey": "",
+      "model": "",
+      "reasoning": { "format": "openai", "effort": "default" },
+      "extraBody": {}
+    }
+  },
+  "startup": { "enabled": false },
+  "shortcuts": { "togglePet": "CommandOrControl+Alt+Shift+D" }
+}

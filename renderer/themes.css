@@ -1,0 +1,43 @@
+:root {
+  --pet-atlas: url('../assets/spritesheet.webp');
+  --portrait-position: 0 0;
+  --fg: #362f42;
+  --secondary: #62536f;
+  --muted: #8c7f9a;
+  --hint: #a296ac;
+  --bg: #f8f7fc;
+  --surface: #fff;
+  --tint: #fcfbfe;
+  --rail: #eeebf5;
+  --line: #e7e1ed;
+  --line-strong: #ded3e9;
+  --accent: #7c65a7;
+  --accent-strong: #6a5198;
+  --accent-soft: #eee6f8;
+  --accent-line: #e7ddf1;
+  --hover: #f0eaf8;
+  --portrait: #e7ddf2;
+  --focus: #b7a2cf;
+  --shadow: #5b41740a;
+}
+:root[data-theme="whale"] {
+  --pet-atlas: url('../assets/whale/spritesheet.webp');
+  --portrait-position: -1152px 0;
+  --fg: #263b50;
+  --secondary: #4c6c87;
+  --muted: #66829b;
+  --hint: #8297ac;
+  --bg: #f4f8fc;
+  --tint: #fbfdff;
+  --rail: #e8f1f9;
+  --line: #dce7f1;
+  --line-strong: #cddfec;
+  --accent: #4282ba;
+  --accent-strong: #2d6d9f;
+  --accent-soft: #e4f0fb;
+  --accent-line: #d4e5f3;
+  --hover: #edf5fc;
+  --portrait: #d8e9f8;
+  --focus: #8fbbde;
+  --shadow: #254b720a;
+}

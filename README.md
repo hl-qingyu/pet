@@ -1,0 +1,124 @@
+# DragonDesk · 独立龙娘桌宠
+
+白发紫瞳的小龙娘，独立运行在 Windows 和 macOS 桌面。双击聊天、单击摸头、按住拖动、右键打开菜单。聊天直接连接你的 API，不依赖 Codex 桌面端，不包含任何 harness、CLI 调用、工具执行或共享登录配置。
+
+外观随当前模型自动切换：**DeepSeek → B 版蓝发鲸鱼娘与海蓝色界面；Codex / GPT → 龙娘与紫色界面**。设置页选择接口或修改模型名时可预览，点击“保存设置”后立即应用到桌宠、聊天头像和托盘图标，无需重启。优先识别模型名，因此自定义中转接口也适用；模型名无法识别时，DeepSeek 接口使用鲸鱼娘，其他接口使用龙娘。两套主题均支持 9 种动作和 16 向视线跟随。
+
+名字、性格和互动台词也随角色独立切换：默认龙娘叫“小龙”，温柔、沉稳、偶尔俏皮；鲸鱼娘叫“小鲸”，活泼、机灵、略带傲娇。设置页会标出“正在编辑：龙娘 / 鲸鱼娘”，修改只影响该角色；切换角色时会保留尚未保存的文字草稿，最后统一保存。聊天请求、点击气泡、主动气泡、名字显示和托盘菜单均使用当前角色配置。新回复会记录当时的角色名字，切换角色不会给旧回复改名。
+
+旧版配置会自动升级为版本 2：原有全局名字、性格和台词完整迁移到龙娘，鲸鱼娘使用独立默认配置。API 密钥、接口、置顶、位置和其他桌面设置均保留。
+
+## Windows：现在就用
+
+双击项目根目录的 **`启动桌宠.vbs`**。也可双击 `启动桌宠.cmd`。
+
+- 已构建程序位于 `dist/win-unpacked/DragonDesk.exe`。请保留 `win-unpacked` 整个目录，不能只复制一个 EXE。
+- 根目录启动器会明确使用根目录的 `config.json`，配置和聊天数据都留在本项目。
+- 双击桌宠打开聊天窗口；右键 → **设置与性格** 填写接口。
+- 默认快捷键：Windows `Ctrl + Alt + Shift + D`；macOS `Cmd + Option + Shift + D`。本项目的快捷键会切换显示/隐藏；注册结果可在设置中查看，冲突时可更改。
+- 隐藏后可从托盘菜单恢复；关闭聊天窗口会留在托盘。彻底退出使用托盘 → **退出 DragonDesk**。
+
+## 配置 API
+
+所有可编辑设置都在一个 UTF-8 JSON 文件 `config.json`。设置页保存也只更新这个文件；手动修改有效 JSON 后会自动加载。非法配置会保留当前有效状态并显示错误。
+
+| 配置项 | 用途 |
+| --- | --- |
+| `chat.provider` | 当前使用的接口 ID：`deepseek`、`openai`、`custom`，也可自行增加 |
+| `providers.<id>.protocol` | `chat-completions` 或 `responses` |
+| `providers.<id>.baseUrl` | API 基础地址，可直接填完整的 `/responses` 或 `/chat/completions` 地址 |
+| `providers.<id>.apiKey` | 你自己的 API 密钥；本机无鉴权服务可留空 |
+| `providers.<id>.model` | API 平台实际支持的模型 ID |
+| `providers.<id>.reasoning.format` | 推理参数格式：`openai` 或 `deepseek`，自定义中转也可手动选择 |
+| `providers.<id>.reasoning.effort` | `default` 跟随模型；OpenAI 可选 `none/minimal/low/medium/high/xhigh/max`（由具体模型支持情况决定）；DeepSeek 可选 `none/low/high/max` |
+| `providers.<id>.extraBody` | 可选请求参数，例如 `reasoning`、`thinking`；不要覆盖消息、模型、流式或工具配置 |
+| `characters.dragon.name` / `characters.whale.name` | 龙娘 / 鲸鱼娘的名字，各自独立 |
+| `characters.<角色>.systemPrompt` | 对应角色的性格、说话方式和设定；当前名字会自动附到聊天指令中 |
+| `characters.<角色>.greetings` | 对应角色的点击、主动气泡台词，不调用 API；角色为 `dragon` 或 `whale` |
+| `pet.idleTalkMinutes` | 本地主动气泡间隔，0 关闭，不调用 API |
+| `pet.alwaysOnTop` | 仅控制桌宠置顶；聊天和设置窗口始终使用普通窗口层级 |
+| `pet.scale` | 桌宠大小，默认 `0.85`（85%） |
+| `startup.enabled` | 是否登录系统后自动启动，默认 `false` |
+| `shortcuts.togglePet` | 显示 / 隐藏快捷键，空字符串禁用 |
+| `chat.saveHistory` | 是否把新的完整对话保存到本机，关闭后不再写入，但不会删除以前的记录 |
+| `chat.historyMessages` | 每轮发送的历史消息上限，默认 30 |
+
+### DeepSeek
+
+预置 `https://api.deepseek.com`、`chat-completions` 协议、模型 `deepseek-flash`。在设置中填入自己的 DeepSeek API Key 并保存。
+
+### OpenAI / Codex 模型、兼容中转
+
+选择 `openai` 配置，默认地址 `https://api.openai.com/v1`，协议 `responses`。填入 API Key 和平台实际提供的模型名称。Codex 模型按普通 Responses 请求接入；这里没有 Codex CLI 或编程代理。不读取或复用 Codex 桌面端的账户与配置。
+
+`custom` 预置本机 OpenAI 兼容服务地址 `http://127.0.0.1:11434/v1`，可改为任意兼容服务的 HTTPS 地址和模型。远程地址要求 HTTPS，本机地址允许 HTTP。API 流式输出支持 Responses 事件及 Chat Completions SSE；也兼容返回普通 JSON 的网关。
+
+### 推理强度
+
+在聊天接口卡片中直接选择“推理参数格式”和“推理强度”。每个接口独立保存，不会影响另一个接口的选择。
+
+- `default` 不额外发送推理字段，也保留旧 `extraBody` 中手写的参数，旧配置不需要迁移。
+- OpenAI / Codex：Responses 发送 `reasoning.effort`；Chat Completions 发送 `reasoning_effort`，显式推理档位使用 `max_completion_tokens` 控制总输出预算。不是所有模型都支持所有档位，请按平台的模型说明选择。
+- DeepSeek：Chat Completions 下，`none` 发送 `thinking.type=disabled`；`low/high/max` 发送 `thinking.type=enabled` 加 `reasoning_effort`。Responses 下使用 `reasoning.effort`，其中 `none` 关闭思考。
+- 显式选择档位会覆盖 `extraBody` 中的旧推理强度，并去掉另一种协议的冲突字段；其他附加参数保留。
+- 推理与最终答复共用输出 token 预算。档位较高时，可同时增加输出上限和请求超时，避免还未输出正文就达到上限。
+
+参数格式依据 [OpenAI 推理文档](https://developers.openai.com/api/docs/guides/reasoning) 和 [DeepSeek 思考模式文档](https://api-docs.deepseek.com/guides/thinking_mode/)。
+
+**没有填 API 时**，桌宠仍能动画、拖动、摸头和展示预设台词；自由聊天会提示先配置密钥。密钥保存在本机配置文件中，不在日志中输出。不要把自己的 `config.json` 上传到仓库或分享。
+
+## 开机自启
+
+在设置中打开 **开机自启** 并保存，或修改 `startup.enabled`。仅注册 DragonDesk 自己的系统登录项，关闭开关会撤销该登录项。
+
+- Windows：使用 Electron 的登录项 API，启动路径为当前 EXE，传递当前配置路径。
+- macOS：打包为 `.app` 后支持登录项。源码开发模式会明确提示先打包，不会假装已经启用。请使用打包 `.app` 默认的配置位置；开发启动脚本使用项目目录，适合开发调试。
+- 移动 Windows 程序文件夹后，请先关再开一次自启，让登录项更新到新路径。
+
+## 数据位置
+
+- 项目启动器：`D:\Project\pet\config.json`；同级 `data/` 保存聊天记录、Electron 缓存和日志。
+- Windows 直接运行打包 EXE：默认在 EXE 同级目录生成配置及 `data/`，使用根目录启动器可统一指向本项目配置。
+- macOS 打包 `.app`：默认 `~/Library/Application Support/DragonDesk/config.json`，同级 `data/`。
+- 可以通过一个启动参数指定其他位置：`--config=/absolute/path/config.json`。
+- 点击“清空聊天”会同时清空运行内存和本机聊天历史。失败或被停止的回复不会写入下一轮上下文。
+- 清空后恢复当前角色的欢迎页和快捷话题，同时清除上一轮错误提示；再次发送消息后进入正常聊天。
+- 切换 API 配置后，当前聊天的近期上下文会发送给新选择的接口；需要隔离时先清空聊天。
+
+## 开发、测试和打包
+
+需要 Node.js 22 或以上。开发与测试依赖都安装在本项目。API 模式不需要 Python。
+
+```sh
+npm install
+npm start
+npm run check
+npm test
+npm run test:ui
+npm run test:packaged
+```
+
+`npm test` 使用回环模拟接口验证流式 UTF-8、请求协议、取消、失败、密钥遮蔽和本地存储。`test:ui` 启动真实 Electron 窗口，连接本地模拟 API，检查成功与失败交互并输出 `work/ui-smoke/data/` 下的截图和报告，不访问外部 API。`test:packaged` 对已经打包的 Windows EXE 执行同样的验证，需先完成 Windows 打包。
+
+Windows 打包：
+
+```sh
+npm run build:win
+```
+
+macOS 打包（在 Mac 上执行）：
+
+```sh
+npm install
+npm run build:mac
+```
+
+生成 Apple Silicon、Intel 两种 ZIP 包。解压 `.app` 后放入“应用程序”。当前未配置开发者签名与公证；如要向他人正式分发，请配置自己的 Apple Developer 签名和 notarization。此项目在 Windows 上构建并测试；macOS 运行和登录项仍需在真机验收，不能在 Windows 上确认。
+
+## 参考与素材
+
+- [OpenAI Responses 流式事件](https://developers.openai.com/api/docs/guides/streaming-responses)
+- [DeepSeek API](https://api-docs.deepseek.com/)
+- [Electron BrowserWindow](https://www.electronjs.org/docs/latest/api/browser-window)、[登录项](https://www.electronjs.org/docs/latest/api/app#appsetloginitemsettingssettings-macos-windows)
+- 龙娘图集来自 [weit0529/gpt-pet](https://github.com/weit0529/gpt-pet)，本项目未修改原图集，署名和许可见 `assets/ATTRIBUTION.md`。
+- 鲸鱼娘 B 版图集来自 [Chih-Kai-Wang/deepseek-girl-codex-pet](https://github.com/Chih-Kai-Wang/deepseek-girl-codex-pet)，保留原图集及上游 MIT 许可，详见 `assets/ATTRIBUTION.md`、`assets/whale/LICENSE.txt`。

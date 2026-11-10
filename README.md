@@ -164,3 +164,8 @@ npm run build:mac
 - [Electron BrowserWindow](https://www.electronjs.org/docs/latest/api/browser-window)、[登录项](https://www.electronjs.org/docs/latest/api/app#appsetloginitemsettingssettings-macos-windows)
 - 龙娘图集来自 [weit0529/gpt-pet](https://github.com/weit0529/gpt-pet)，本项目未修改原图集，署名和许可见 `assets/ATTRIBUTION.md`。
 - 鲸鱼娘 B 版图集来自 [Chih-Kai-Wang/deepseek-girl-codex-pet](https://github.com/Chih-Kai-Wang/deepseek-girl-codex-pet)，已清理跨帧的尾巴和头发碎片，保留原有动作、视线方向及上游 MIT 许可；详见 `assets/ATTRIBUTION.md`、`assets/whale/cleanup-report.json`、`assets/whale/LICENSE.txt`。
+
+### DSH 账号余额气泡
+在 DeepSeek 模型的设置 → DSH 桌面端中开启「账号余额气泡」。桌宠下方独立气泡以 14px 字体单行显示余额（充值与赠送合计）和累计消费，每 5 分钟刷新。默认关闭，可独立于执行状态监听开启；切换龙娘时停止查询。读取 DSH_HOME（默认 ~/.dsh）中的当前账号登录凭据，仅向 platform.deepseek.com 发起只读查询，不保存凭据或发送到渲染页面。未登录或查询失败显示不可用，不将失败当作零余额。累计消费来自账号汇总，不是当前会话或今日 Token 用量。
+
+可设置「余额预警金额」（账号原币种，默认 0），余额低于或等于预警金额时播放打哈欠、抱鲸鱼睡觉动画，余额恢复后恢复正常动画。当前接口未配置 API Key、地址或模型时，不查询余额，也不启动 Codex / DSH 运行状态监听；补全后按已有开关恢复。

@@ -53,5 +53,8 @@
       "identity": null
     },
     "artifactName": "DragonDesk-${version}-${os}-${arch}.${ext}"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }

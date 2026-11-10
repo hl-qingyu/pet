@@ -23,6 +23,7 @@ async function renderer(model = 'deepseek-flash') {
   await Promise.resolve(); await Promise.resolve();
   return {sprite:element('#sprite'),art:element('#sprite-art'),
     state:value=>handlers.get('pet:state')({state:value}),
+    account:value=>handlers.get('dsh:account')(value),
     tick:time=>{ const next=frames.shift();assert.ok(next);next(time);return element('#sprite').style.backgroundPosition; }};
 }
 
@@ -53,3 +54,11 @@ test('dragon working animation retains its cadence and receives no whale frame c
   assert.equal(app.art.style.transform,'translateX(0px)');
 });
 
+
+test('low balance plays sleep animation and clearing it restores idle; dragon remains unaffected',async()=>{
+ const app=await renderer();app.account({insufficient:true});assert.equal(app.tick(0),'0px -1248px');
+ app.sprite.events.pointerenter();assert.equal(app.tick(300),'-192px -1248px');
+ app.sprite.events.pointerleave();app.account({insufficient:false});assert.equal(app.tick(301),'0px 0px');
+ app.account({error:'unavailable'});assert.equal(app.tick(302),'0px 0px');
+ const dragon=await renderer('gpt-codex');dragon.account({insufficient:true});assert.equal(dragon.tick(0),'0px 0px');
+});

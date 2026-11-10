@@ -28,6 +28,8 @@ let petWindow, panelWindow, tray, store, history, request, unwatch, currentShort
 let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
 let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' } };
 let appliedTheme;
+let accountSnapshot = null, accountEnabled = false;
+const dshAccount = new (require('./backends/dsh-account.cjs').DshAccount)(value => { accountSnapshot = value; broadcast('dsh:account', value); });
 let shortcutRecording = false, shortcutRecordingRevision = 0, shortcutRecordingTimer;
 let dshObserver, openaiObserver, integrationSignature = '', integrationGeneration = 0, integrationStopping = Promise.resolve();
 const petState = new PetState(payload => { currentState = payload.state; broadcast('pet:state', payload); }, () => Boolean(request));
@@ -40,18 +42,23 @@ function broadcast(channel, value) { send(petWindow, channel, value); send(panel
 function status(state, bubble, resetMs = 0) { petState.local(state, bubble, resetMs); }
 function applyIntegration() {
   const selected = selectedIntegration(store.value), options = store.value.integrations[selected];
+  const provider = store.value.providers[store.value.chat.provider];
+  const hasApi = Boolean(provider?.apiKey?.trim() && provider?.baseUrl?.trim() && provider?.model?.trim());
+  const showAccount = selected === 'dsh' && hasApi && options.showAccount === true && !smoke;
+  const accountKey = JSON.stringify([showAccount, options.balanceWarning ?? 0]);
+  if (accountKey !== accountEnabled) { accountEnabled = accountKey; dshAccount.configure(showAccount, options.balanceWarning ?? 0); }
   const inactive = selected === 'dsh' ? 'openai' : 'dsh';
   runtime[inactive] = { count: 0, degraded: false, message: store.value.integrations[inactive].enabled ? `已启用，切换到${inactive === 'dsh' ? '鲸鱼娘' : '龙娘'}后监听` : '未开启' };
-  const signature = JSON.stringify({ selected, options });
+  const signature = JSON.stringify({ selected, options, hasApi });
   if (signature === integrationSignature) return;
   integrationSignature = signature;
   const generation = ++integrationGeneration;
   const previous = dshObserver || openaiObserver;
   if (previous) integrationStopping = previous.stop();
   dshObserver = openaiObserver = null;
-  petState.external({ state: 'idle' }); petState.enable(options.enabled);
-  runtime[selected] = { count: 0, degraded: false, message: options.enabled ? `等待 ${selected === 'dsh' ? 'DSH 会话' : 'ChatGPT 桌面端连接'}……` : '未开启' };
-  if (!options.enabled) return;
+  petState.external({ state: 'idle' }); petState.enable(options.enabled && hasApi);
+  runtime[selected] = { count: 0, degraded: false, message: !hasApi ? '未配置 API，运行状态监听已停止' : options.enabled ? `等待 ${selected === 'dsh' ? 'DSH 会话' : 'ChatGPT 桌面端连接'}……` : '未开启' };
+  if (!options.enabled || !hasApi) { broadcast('runtime:updated', runtime); return; }
   integrationStopping.then(() => {
     if (quitting || generation !== integrationGeneration) return;
     const Observer = selected === 'dsh' ? require('./backends/dsh-observer.cjs').DshObserver : require('./backends/openai-observer.cjs').OpenaiObserver;
@@ -69,7 +76,7 @@ function applyIntegration() {
     broadcast('runtime:updated', runtime);
   });
 }
-function petSize() { return { width: Math.round(290 * store.value.pet.scale), height: Math.round(340 * store.value.pet.scale) }; }
+function petSize() { return { width: Math.round(290 * store.value.pet.scale), height: Math.round(420 * store.value.pet.scale) }; }
 function clampPoint(point, size) {
   const display = point ? screen.getDisplayNearestPoint({ x: Math.round(point.x), y: Math.round(point.y) }) : screen.getPrimaryDisplay();
   const a = display.workArea;
@@ -213,7 +220,7 @@ function handle(channel, callback) { ipcMain.handle(channel, async (event, ...ar
 function on(channel, callback) { ipcMain.on(channel, (event, ...args) => { guard(event); callback(...args); }); }
 
 function setupIPC() {
-  handle('bootstrap', () => ({ config: store.value, configPath, runtime, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request), platform: process.platform }));
+  handle('bootstrap', () => ({ config: store.value, configPath, runtime, account: accountSnapshot, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request), platform: process.platform }));
   handle('shortcut:recording', active => setShortcutRecording(active));
   handle('config:save', next => {
     if (request) throw new Error('请先停止当前回复，再修改接口或性格。');
@@ -641,5 +648,5 @@ if (ownLock) app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => { quitting = true; ++integrationGeneration; dshObserver?.stop(); openaiObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
+app.on('before-quit', () => { quitting = true; dshAccount.stop(); ++integrationGeneration; dshObserver?.stop(); openaiObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
 app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); clearTimeout(shortcutRecordingTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

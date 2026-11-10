@@ -139,6 +139,8 @@ function fill(value) {
   $('#scale-label').textContent = `${Math.round(config.pet.scale*100)}%`; $('#idle-minutes').value = config.pet.idleTalkMinutes; $('#shortcut').value = config.shortcuts.togglePet;
   $('#shortcut-hint').textContent = '点击“键盘录入”后按组合键，Esc 取消；保存后生效。清空并保存可禁用快捷键。';
   const dsh = config.integrations.dsh;
+  $('#dsh-account').checked = dsh.showAccount === true;
+  $('#dsh-balance-warning').value = dsh.balanceWarning ?? 0;
   $('#dsh-enabled').checked = dsh.enabled; $('#dsh-bubble').checked = dsh.showBubble;
   $('#dsh-root').value = dsh.sessionsRoot; $('#dsh-workspace').value = dsh.workspace;
   $('#openai-enabled').checked = config.integrations.openai.enabled; $('#openai-bubble').checked = config.integrations.openai.showBubble;
@@ -152,7 +154,7 @@ function readForm() {
   next.startup.enabled = $('#autostart').checked; next.pet.alwaysOnTop = $('#always-top').checked; next.pet.followMouse = $('#follow').checked;
   next.pet.showOnLaunch = $('#show-on-launch').checked; next.chat.saveHistory = $('#save-history').checked; next.pet.scale = Number($('#scale').value);
   next.pet.idleTalkMinutes = Number($('#idle-minutes').value); next.shortcuts.togglePet = $('#shortcut').value.trim();
-  Object.assign(next.integrations.dsh, { enabled: $('#dsh-enabled').checked, showBubble: $('#dsh-bubble').checked,
+  Object.assign(next.integrations.dsh, { enabled: $('#dsh-enabled').checked, showBubble: $('#dsh-bubble').checked, showAccount: $('#dsh-account').checked, balanceWarning: Number($('#dsh-balance-warning').value),
     sessionsRoot: $('#dsh-root').value.trim(), workspace: $('#dsh-workspace').value.trim() });
   Object.assign(next.integrations.openai, { enabled: $('#openai-enabled').checked, showBubble: $('#openai-bubble').checked,
     workspace: $('#openai-workspace').value.trim() });

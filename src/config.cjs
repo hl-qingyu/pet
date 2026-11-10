@@ -78,6 +78,8 @@ function validate(config) {
   if (config.integrations !== undefined) {
     check(object(config.integrations) && object(config.integrations.dsh), 'integrations.dsh 必须是对象');
     const dsh = config.integrations.dsh;
+    if (dsh.balanceWarning !== undefined) range(dsh.balanceWarning, 0, 1000000, 'dsh.balanceWarning');
+    if (dsh.showAccount !== undefined) check(typeof dsh.showAccount === 'boolean', 'dsh.showAccount 必须是布尔值');
     for (const key of ['enabled', 'showBubble']) check(typeof dsh[key] === 'boolean', `dsh.${key} 必须是布尔值`);
     for (const key of ['sessionsRoot', 'workspace']) text(dsh[key], `dsh.${key}`, 1000);
     for (const [key, min, max] of [['pollMs', 200, 5000], ['activeSeconds', 10, 3600]]) {

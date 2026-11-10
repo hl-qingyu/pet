@@ -41,7 +41,9 @@
       <article class="card"><div class="card-heading"><span>03</span><h3>桌面与启动</h3></div>
         <div class="toggles"><label class="toggle"><span>开机自启<small>登录电脑后启动 DragonDesk</small></span><input id="autostart" type="checkbox"></label><label class="toggle"><span>桌宠保持置顶<small>聊天和设置窗口不置顶</small></span><input id="always-top" type="checkbox"></label><label class="toggle"><span>视线跟随鼠标</span><input id="follow" type="checkbox"></label><label class="toggle"><span>启动时显示桌宠</span><input id="show-on-launch" type="checkbox"></label><label class="toggle"><span>保存聊天记录<small>保存在这台电脑上</small></span><input id="save-history" type="checkbox"></label></div>
         <div class="two"><label>桌宠大小 <output id="scale-label">85%</output><input id="scale" type="range" min="0.65" max="2" step="0.05" value="0.85"></label><label>主动气泡间隔（分钟）<input id="idle-minutes" type="number" min="0" max="1440"><small>0 为关闭，不调用 API</small></label></div>
-        <label>显示 / 隐藏快捷键<input id="shortcut" spellcheck="false" placeholder="CommandOrControl+Alt+Shift+D"></label>
+        <label for="shortcut">显示 / 隐藏快捷键</label>
+        <div class="shortcut-controls"><input id="shortcut" maxlength="100" spellcheck="false" autocomplete="off" aria-describedby="shortcut-hint" placeholder="点击“键盘录入”后按组合键，也可手动输入"><button id="shortcut-record" type="button">键盘录入</button><button id="shortcut-cancel" type="button" class="hidden">取消</button><button id="shortcut-clear" type="button">清空</button></div>
+        <p class="hint" id="shortcut-hint" role="status">点击“键盘录入”后按组合键，Esc 取消；保存后生效。清空并保存可禁用快捷键。</p>
         <p class="hint" id="shortcut-status"></p><p class="hint" id="startup-status"></p>
       </article>
       <article class="card hidden" id="dsh-integration-card"><div class="card-heading"><span>04</span><h3>DSH 桌面端</h3></div>
@@ -62,4 +64,4 @@
     </div>
   </section>
 </main><div id="confirm-clear" class="dialog-backdrop hidden"><div class="dialog"><h3>清空这段聊天？</h3><p>会清除本机记录和后续聊天上下文。</p><div><button id="cancel-clear">保留</button><button id="confirm-clear-button" class="primary">清空</button></div></div></div>
-<script src="themes.js"></script><script src="panel.js"></script></body></html>
+<script src="themes.js"></script><script src="shortcuts.js"></script><script src="panel.js"></script></body></html>

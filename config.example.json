@@ -61,5 +61,5 @@
     "openai": { "enabled": false, "showBubble": true, "socketPath": "", "workspace": "", "activeSeconds": 600 }
   },
   "startup": { "enabled": false },
-  "shortcuts": { "togglePet": "CommandOrControl+Alt+Shift+D" }
+  "shortcuts": { "togglePet": "Alt+X" }
 }

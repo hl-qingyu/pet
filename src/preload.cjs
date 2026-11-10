@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const invokeChannels = new Set(['bootstrap', 'config:save', 'config:open', 'history:clear', 'chat:send', 'chat:stop']);
+const invokeChannels = new Set(['bootstrap', 'config:save', 'config:open', 'history:clear', 'chat:send', 'chat:stop', 'shortcut:recording']);
 const sendChannels = new Set(['panel:open', 'panel:hide', 'pet:interact', 'pet:menu', 'pet:hide', 'pet:hit', 'pet:drag-start', 'pet:drag', 'pet:drag-end']);
 const receiveChannels = new Set(['pet:state', 'pet:cursor', 'pet:drag-direction', 'panel:page', 'config:updated', 'runtime:updated', 'history:updated', 'chat:start', 'chat:delta', 'chat:done', 'chat:error', 'chat:idle']);
 contextBridge.exposeInMainWorld('dragon', {

@@ -1,6 +1,44 @@
 const $ = selector => document.querySelector(selector);
 let config, activeConfig, selectedProvider, editingCharacter, activePage = 'chat', busy = false, pendingNode, pendingId, partial = '', dirty = false;
+let shortcutPlatform = 'win32', shortcutRecorder = null, shortcutRuntime = { active: false, revision: 0 };
+function shortcutUI() {
+  const recording = Boolean(shortcutRecorder);
+  $('#shortcut').readOnly = recording; $('#shortcut').classList.toggle('recording', recording);
+  $('#shortcut-record').disabled = busy || recording;
+  $('#shortcut-cancel').classList.toggle('hidden', !recording);
+  $('#shortcut-clear').disabled = busy;
+  $('#save').disabled = busy || recording;
+}
+function endShortcutRecording(commit = false, fromMain = false, message = '') {
+  const recorder = shortcutRecorder;
+  if (!recorder) return;
+  shortcutRecorder = null;
+  $('#shortcut').value = commit ? recorder.candidate.accelerator : recorder.before;
+  if (commit) dirty = true;
+  $('#shortcut-hint').textContent = message || (commit ? `已记录 ${window.petShortcuts.display(recorder.candidate.accelerator, shortcutPlatform)}，保存后生效。` : '已取消键盘录入，快捷键设置未改变。');
+  shortcutUI();
+  if (!fromMain) window.dragon.invoke('shortcut:recording', false).catch(error => notice(error.message, true));
+}
+async function startShortcutRecording() {
+  if (busy || shortcutRecorder) return;
+  const recorder = { before: $('#shortcut').value, candidate: null, ready: false, revision: 0 };
+  shortcutRecorder = recorder; shortcutUI(); $('#shortcut-hint').textContent = '正在准备键盘录入……';
+  try {
+    const state = await window.dragon.invoke('shortcut:recording', true);
+    if (shortcutRecorder !== recorder) return;
+    if (!state.active || (shortcutRuntime.revision > state.revision && !shortcutRuntime.active)) {
+      endShortcutRecording(false, true, '键盘录入已结束，请重新点击“键盘录入”。'); return;
+    }
+    recorder.ready = true; recorder.revision = state.revision;
+    $('#shortcut-hint').textContent = '请按下组合键，松开主键完成；Esc 或取消按钮退出。';
+    $('#shortcut').focus();
+  } catch (error) {
+    if (shortcutRecorder !== recorder) return;
+    endShortcutRecording(false); $('#shortcut-hint').textContent = error.message;
+  }
+}
 function page(name) {
+  if (name !== 'settings') endShortcutRecording();
   activePage = name;
   for (const element of document.querySelectorAll('.page')) element.classList.toggle('hidden', element.id !== `${name}-page`);
   for (const button of document.querySelectorAll('.nav')) button.classList.toggle('active', button.dataset.page === name);
@@ -36,8 +74,14 @@ function message(role, text, pending = false, characterName = '伙伴') {
   wrapper.append(label, content); $('#messages').append(wrapper); scrollChat(); return wrapper;
 }
 function scrollChat() { const area = $('#messages'); area.scrollTop = area.scrollHeight; }
-function setBusy(value) { busy = value; $('#send').classList.toggle('hidden',value); $('#stop').classList.toggle('hidden',!value); $('#save').disabled = value; $('#clear-chat').disabled = value; $('#chat-status').textContent = value ? '正在想，慢慢说给你听……' : `${activeConfig.providers[activeConfig.chat.provider].label} · 准备好了`; }
-function runtime(value) { $('#shortcut-status').textContent = value.shortcut || ''; $('#startup-status').textContent = value.startup || ''; $('#dsh-status').textContent = value.dsh?.message || '未开启'; $('#openai-status').textContent = value.openai?.message || '未开启'; if (value.error) notice(value.error,true); }
+function setBusy(value) { busy = value; if (busy) endShortcutRecording(); $('#send').classList.toggle('hidden',value); $('#stop').classList.toggle('hidden',!value); shortcutUI(); $('#clear-chat').disabled = value; $('#chat-status').textContent = value ? '正在想，慢慢说给你听……' : `${activeConfig.providers[activeConfig.chat.provider].label} · 准备好了`; }
+function runtime(value) {
+  if (Number.isSafeInteger(value.shortcutRecordingRevision) && value.shortcutRecordingRevision >= shortcutRuntime.revision) {
+    shortcutRuntime = { active: value.shortcutRecording === true, revision: value.shortcutRecordingRevision };
+    if (shortcutRecorder?.ready && !shortcutRuntime.active && shortcutRuntime.revision >= shortcutRecorder.revision) endShortcutRecording(false, true, '键盘录入已结束，快捷键设置未改变。');
+  }
+  $('#shortcut-status').textContent = value.shortcut || ''; $('#startup-status').textContent = value.startup || ''; $('#dsh-status').textContent = value.dsh?.message || '未开启'; $('#openai-status').textContent = value.openai?.message || '未开启'; if (value.error) notice(value.error,true);
+}
 function effortOptions(value = 'default') {
   const deepseek = $('#reasoning-format').value === 'deepseek';
   const all = [['default','模型默认'],['none','关闭推理（none）'],['minimal','极低（minimal）'],['low','低（low）'],['medium','中（medium）'],['high','高（high）'],['xhigh','极高（xhigh）'],['max','最大（max）']];
@@ -84,6 +128,7 @@ function retainProvider() {
   try { provider.extraBody = JSON.parse($('#extra-body').value || '{}'); } catch { throw new Error('附加请求参数不是有效 JSON。'); }
 }
 function fill(value) {
+  endShortcutRecording();
   activeConfig = structuredClone(value); config = structuredClone(value); dirty = false; editingCharacter = null;
   $('#backend-label').textContent = config.providers[config.chat.provider].label;
   $('#provider').replaceChildren(...Object.entries(config.providers).map(([id,p]) => { const option = document.createElement('option'); option.value = id; option.textContent = p.label; return option; }));
@@ -92,6 +137,7 @@ function fill(value) {
   $('#autostart').checked = config.startup.enabled; $('#always-top').checked = config.pet.alwaysOnTop; $('#follow').checked = config.pet.followMouse;
   $('#show-on-launch').checked = config.pet.showOnLaunch; $('#save-history').checked = config.chat.saveHistory; $('#scale').value = config.pet.scale;
   $('#scale-label').textContent = `${Math.round(config.pet.scale*100)}%`; $('#idle-minutes').value = config.pet.idleTalkMinutes; $('#shortcut').value = config.shortcuts.togglePet;
+  $('#shortcut-hint').textContent = '点击“键盘录入”后按组合键，Esc 取消；保存后生效。清空并保存可禁用快捷键。';
   const dsh = config.integrations.dsh;
   $('#dsh-enabled').checked = dsh.enabled; $('#dsh-bubble').checked = dsh.showBubble;
   $('#dsh-root').value = dsh.sessionsRoot; $('#dsh-workspace').value = dsh.workspace;
@@ -113,9 +159,10 @@ function readForm() {
   return next;
 }
 async function save() {
+  if (shortcutRecorder) { notice('请先完成或取消键盘录入。'); return; }
   try { $('#save').disabled = true; const result = await window.dragon.invoke('config:save',readForm()); fill(result.config); runtime(result.runtime); notice('已保存，设置已经生效。'); }
   catch (error) { notice(error.message.replace(/^Error invoking remote method '[^']+': Error: /,''),true); }
-  finally { $('#save').disabled = busy; }
+  finally { shortcutUI(); }
 }
 async function send() {
   if (busy) return;
@@ -132,6 +179,28 @@ $('#messages').addEventListener('click', event => {
 $('#send').onclick = send; $('#stop').onclick = () => window.dragon.invoke('chat:stop');
 $('#message').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); } };
 $('#save').onclick = save;
+$('#shortcut-record').onclick = startShortcutRecording;
+$('#shortcut-cancel').onclick = () => endShortcutRecording();
+$('#shortcut-clear').onclick = () => { endShortcutRecording(); $('#shortcut').value = ''; dirty = true; $('#shortcut-hint').textContent = '已清空，保存后禁用快捷键。'; };
+$('#shortcut').addEventListener('input', () => { if (!shortcutRecorder) $('#shortcut-hint').textContent = '已修改，保存后生效。'; });
+document.addEventListener('keydown', event => {
+  const recorder = shortcutRecorder;
+  if (!recorder) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  if (event.key === 'Escape') { endShortcutRecording(); return; }
+  if (!recorder.ready || recorder.candidate) return;
+  const result = window.petShortcuts.fromEvent(event, shortcutPlatform);
+  if (result.kind === 'cancel') { endShortcutRecording(); return; }
+  if (result.kind === 'shortcut') { recorder.candidate = result; $('#shortcut').value = result.accelerator; $('#shortcut-hint').textContent = '松开主键完成录入。'; }
+  else if (result.kind === 'invalid') $('#shortcut-hint').textContent = result.hint;
+  else if (result.kind === 'modifier') $('#shortcut-hint').textContent = '继续按下一个字母、数字或功能键。';
+}, true);
+document.addEventListener('keyup', event => {
+  if (!shortcutRecorder) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  if (shortcutRecorder.candidate?.releaseKey === (event.code || event.key.toLowerCase())) endShortcutRecording(true);
+}, true);
+window.addEventListener('blur', () => endShortcutRecording());
 $('#provider').onchange = () => { const target = $('#provider').value; try { retainProvider(); providerFields(target); dirty = true; } catch (error) { $('#provider').value = selectedProvider; notice(error.message,true); } };
 $('#reasoning-format').onchange = () => { effortOptions($('#reasoning-effort').value); dirty = true; };
 for (const selector of ['#model', '#base-url']) $(selector).addEventListener('input', previewTheme);
@@ -155,4 +224,4 @@ window.dragon.on('chat:delta', payload => { if (payload.id !== pendingId) return
 window.dragon.on('chat:done', payload => { if (payload.id !== pendingId) return; pendingNode.classList.remove('pending'); pendingNode.querySelector('.message-content').textContent = payload.text; scrollChat(); });
 window.dragon.on('chat:error', payload => { if (payload.id !== pendingId) return; pendingNode.classList.remove('pending'); pendingNode.classList.add('failed'); pendingNode.querySelector('.message-content').textContent = partial || '这次还没能回复。'; chatError(payload.message); });
 window.dragon.on('chat:idle', () => setBusy(false));
-window.dragon.invoke('bootstrap').then(data => { fill(data.config); runtime(data.runtime); $('#config-path').textContent = data.configPath; renderHistory(data.messages); setBusy(data.busy); page(data.page); }).catch(error => { window.__bootError = error.message; chatError(error.message); });
+window.dragon.invoke('bootstrap').then(data => { shortcutPlatform = data.platform || 'win32'; fill(data.config); runtime(data.runtime); $('#config-path').textContent = data.configPath; renderHistory(data.messages); setBusy(data.busy); page(data.page); }).catch(error => { window.__bootError = error.message; chatError(error.message); });

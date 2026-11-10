@@ -26,8 +26,9 @@ if (!ownLock) app.quit();
 
 let petWindow, panelWindow, tray, store, history, request, unwatch, currentShortcut = '', cursorTimer;
 let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
-let runtime = { shortcut: '', startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' } };
+let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' } };
 let appliedTheme;
+let shortcutRecording = false, shortcutRecordingRevision = 0, shortcutRecordingTimer;
 let dshObserver, openaiObserver, integrationSignature = '', integrationGeneration = 0, integrationStopping = Promise.resolve();
 const petState = new PetState(payload => { currentState = payload.state; broadcast('pet:state', payload); }, () => Boolean(request));
 
@@ -89,7 +90,8 @@ function interaction(kind = 'pet') {
   petState.interact(kind === 'jump' ? 'jumping' : 'waving', lines.length ? lines[Math.floor(Math.random() * lines.length)] : '我在呢。');
 }
 function setShortcut(accelerator) {
-  if (accelerator === currentShortcut) return;
+  if (shortcutRecording) return;
+  if (accelerator && accelerator === currentShortcut) return;
   if (currentShortcut) globalShortcut.unregister(currentShortcut);
   currentShortcut = '';
   if (!accelerator) { runtime.shortcut = '未设置快捷键，可用托盘显示桌宠'; return; }
@@ -97,6 +99,26 @@ function setShortcut(accelerator) {
     if (globalShortcut.register(accelerator, togglePet)) { currentShortcut = accelerator; runtime.shortcut = `${accelerator} · 注册成功`; }
     else runtime.shortcut = `${accelerator} 被占用，请换一个组合；托盘仍然可用`;
   } catch { runtime.shortcut = '快捷键格式无效，请检查设置'; }
+}
+function setShortcutRecording(active) {
+  if (typeof active !== 'boolean') throw new Error('录入状态必须是布尔值');
+  if (active && (request || !panelWindow?.isVisible())) throw new Error('请先停止回复，并在设置窗口使用键盘录入。');
+  if (active === shortcutRecording) return { active, revision: shortcutRecordingRevision };
+  shortcutRecording = active; shortcutRecordingRevision++;
+  runtime.shortcutRecording = active; runtime.shortcutRecordingRevision = shortcutRecordingRevision;
+  clearTimeout(shortcutRecordingTimer); shortcutRecordingTimer = null;
+  if (active) {
+    if (currentShortcut) globalShortcut.unregister(currentShortcut);
+    currentShortcut = '';
+    panelWindow.webContents.setIgnoreMenuShortcuts(true);
+    runtime.shortcut = '键盘录入中，原快捷键暂时停用';
+    shortcutRecordingTimer = setTimeout(() => setShortcutRecording(false), 30000); shortcutRecordingTimer.unref();
+  } else {
+    if (panelWindow && !panelWindow.isDestroyed() && !panelWindow.webContents.isDestroyed()) panelWindow.webContents.setIgnoreMenuShortcuts(false);
+    setShortcut(store.value.shortcuts.togglePet);
+  }
+  broadcast('runtime:updated', runtime);
+  return { active, revision: shortcutRecordingRevision };
 }
 const LOGIN_ITEM_NAME = 'DragonDesk';
 function windowsLoginItemExists(name) {
@@ -191,9 +213,11 @@ function handle(channel, callback) { ipcMain.handle(channel, async (event, ...ar
 function on(channel, callback) { ipcMain.on(channel, (event, ...args) => { guard(event); callback(...args); }); }
 
 function setupIPC() {
-  handle('bootstrap', () => ({ config: store.value, configPath, runtime, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request) }));
+  handle('bootstrap', () => ({ config: store.value, configPath, runtime, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request), platform: process.platform }));
+  handle('shortcut:recording', active => setShortcutRecording(active));
   handle('config:save', next => {
     if (request) throw new Error('请先停止当前回复，再修改接口或性格。');
+    setShortcutRecording(false);
     const previous = store.value;
     const { validate, migrate } = require('./config.cjs'); next = migrate(next); validate(next);
     next.pet.position = store.value.pet.position;
@@ -264,6 +288,8 @@ function createWindows() {
   for (const window of [petWindow, panelWindow]) secureWindow(window);
   if (process.platform === 'darwin') petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panelWindow.on('close', event => { if (!quitting) { event.preventDefault(); panelWindow.hide(); } });
+  for (const event of ['blur', 'hide']) panelWindow.on(event, () => setShortcutRecording(false));
+  for (const event of ['render-process-gone', 'did-start-loading']) panelWindow.webContents.on(event, () => setShortcutRecording(false));
   petWindow.on('close', event => { if (!quitting) { event.preventDefault(); hidePet(); } });
   petWindow.on('move', persistPosition);
   petWindow.once('ready-to-show', () => { if (store.value.pet.showOnLaunch) showPet(); status('idle', getCharacter(store.value).greetings[0]); });
@@ -424,6 +450,10 @@ async function smokeTest() {
     await panelWindow.webContents.executeJavaScript(`document.querySelector('#follow').checked=true;document.querySelector('#save').click();`);
     await waitFor(() => store.value.pet.followMouse);
     for (let direction = 0; direction < 16; direction++) {
+      // Gaze frames apply while the visible pet is not hovered. Reset native
+      // window/pointer state before supplying each synthetic cursor direction.
+      showPet();
+      await petWindow.webContents.executeJavaScript(`document.querySelector('#sprite').dispatchEvent(new PointerEvent('pointerleave'));`);
       const angle = direction * Math.PI / 8;
       const scale = store.value.pet.scale;
       send(petWindow, 'pet:cursor', { x: (145 + Math.sin(angle) * 120) * scale, y: (210 - Math.cos(angle) * 120) * scale });
@@ -567,6 +597,10 @@ async function smokeTest() {
         openaiFailure: true, roleBoundSources: true, oneObserver: true, noTranscriptRetained: true, pass: true });
     } finally { await openaiFixture.close(); }
     await saveTheme('custom', initialModel, initialModel.startsWith('deepseek') ? 'whale' : 'dragon');
+    // Focus-changing keyboard tests run after cursor animation checks so their
+    // native focus/hover events cannot interfere with the synthetic look input.
+    themeChecks.push(await require('./testing/shortcut-smoke.cjs').smokeShortcutRecording({ panelWindow, petWindow, store, globalShortcut,
+      showPanel, waitFor, getRecording: () => shortcutRecording, getCurrentShortcut: () => currentShortcut, dataRoot }));
   }
   showPanel('settings');
   await panelWindow.webContents.executeJavaScript('document.querySelector(".settings-body").scrollTop=document.querySelectorAll(".card")[1].offsetTop-120;');
@@ -608,4 +642,4 @@ if (ownLock) app.whenReady().then(async () => {
 });
 app.on('window-all-closed', () => {});
 app.on('before-quit', () => { quitting = true; ++integrationGeneration; dshObserver?.stop(); openaiObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
-app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });
+app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); clearTimeout(shortcutRecordingTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

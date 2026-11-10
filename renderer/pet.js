@@ -1,13 +1,13 @@
 const sprite = document.querySelector('#sprite'), scene = document.querySelector('#scene'), bubble = document.querySelector('#bubble');
 const art = document.querySelector('#sprite-art');
 const names = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review'];
-let accountInsufficient = false;
+let accountInsufficient = false, accountDepleted = false, depletionFinished = false;
 let config, state = 'idle', row = 0, frame = 0, next = 0, hover = false, hoverJumpDone = false, hoverJumpEnd = 0, drag = false, moved = false, dragStartX = 0, dragStartY = 0, direction = null, bubbleTimer, clickTimer;
 function cell(r,c) {
   sprite.style.backgroundPosition = `${-c*192}px ${-r*208}px`;
   art.style.transform = `translateX(${window.petMotion.offset(document.documentElement.dataset.theme,r,c)}px)`;
 }
-function choose(name) { const r = Math.max(0, names.indexOf(name)); if (row !== r) { row = r; frame = 0; next = 0; } }
+function choose(name) { if (accountDepleted && document.documentElement.dataset.theme === 'whale') name = 'failed'; const r = Math.max(0, names.indexOf(name)); if (row !== r) { row = r; frame = 0; next = 0; } }
 function say(text) { if (!text) return; clearTimeout(bubbleTimer); bubble.textContent = text; bubble.classList.add('visible'); bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), 6500); }
 function configure(value) {
   const theme = window.petThemes.resolve(value);
@@ -21,8 +21,19 @@ function configure(value) {
   sprite.setAttribute('aria-label', `${window.petThemes.character(value).name}（${theme.label}）：单击互动，双击聊天，右键菜单，按住拖动`);
 }
 function animate(t) {
+  if (accountDepleted && document.documentElement.dataset.theme === 'whale') {
+    choose('failed');
+    if (depletionFinished) cell(5, window.petMotion.durations('whale', 5).length - 1);
+    if (!depletionFinished && t >= next) {
+      const durations = window.petMotion.durations('whale', 5);
+      cell(5, frame); next = t + durations[frame];
+      if (frame === durations.length - 1) depletionFinished = true;
+      else frame++;
+    }
+    requestAnimationFrame(animate); return;
+  }
   if (hoverJumpEnd && t >= hoverJumpEnd) hoverJumpDone = true;
-  const exhausted = accountInsufficient && document.documentElement.dataset.theme === 'whale';
+  const exhausted = accountInsufficient && document.documentElement.dataset.theme === 'whale' && state === 'idle' && (!hover || hoverJumpDone);
   if (drag && moved) { /* drag decides the row */ }
   else if (exhausted) choose('waiting');
   else if (hover && !hoverJumpDone && state === 'idle') choose('jumping');
@@ -78,6 +89,11 @@ window.dragon.on('config:updated', configure);
 window.dragon.invoke('bootstrap').then(data => { configure(data.config); showAccount(data.account); state = data.state; sprite.dataset.loaded = 'true'; requestAnimationFrame(animate); }).catch(error => { window.__bootError = error.message; say(error.message); });
 
 function showAccount(value) {
+  if (value && !value.error && !value.loading) {
+    const depleted = value.depleted === true;
+    if (depleted !== accountDepleted) { depletionFinished = false; frame = 0; next = 0; }
+    accountDepleted = depleted;
+  } else if (!value) { accountDepleted = false; depletionFinished = false; }
   accountInsufficient = value?.insufficient === true;
   const element = document.querySelector('#account-bubble');
   if (!element) return;
@@ -87,3 +103,5 @@ function showAccount(value) {
   element.title = value.updated ? `更新于 ${new Date(value.updated).toLocaleTimeString()}` : '';
 }
 window.dragon.on('dsh:account', showAccount);
+
+

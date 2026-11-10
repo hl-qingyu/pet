@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {project,DshAccount}=require('../src/backends/dsh-account.cjs');
 test('account projection includes only validated monetary summaries',()=>{
- assert.deepEqual(project({normal_wallets:[{currency:'CNY',balance:'1.25'}],bonus_wallets:[],total_costs:[{currency:'USD',amount:'0.5'}],token:'secret'}),{insufficient:false,balance:'¥1.25',bonus:'—',cost:'$0.50'});
+ assert.deepEqual(project({normal_wallets:[{currency:'CNY',balance:'1.25'}],bonus_wallets:[],total_costs:[{currency:'USD',amount:'0.5'}],token:'secret'}),{depleted:false,insufficient:false,balance:'¥1.25',bonus:'—',cost:'$0.50'});
  assert.throws(()=>project({}));
  assert.throws(()=>project({normal_wallets:[{currency:'CNY',balance:'oops'}]}));
 });

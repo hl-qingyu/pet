@@ -18,7 +18,7 @@ function project(data, threshold = 0) {
   const totals = new Map();
   for (const wallet of wallets) totals.set(wallet.currency, (totals.get(wallet.currency) || 0) + Number(wallet.balance));
   const balance = [...totals].map(([currency, value]) => (currency === 'CNY' ? '¥' : '$') + value.toFixed(2)).join(' / ') || '—';
-  return { insufficient: totals.size > 0 && [...totals.values()].every(value => value <= threshold), balance, bonus, cost: amounts('total_costs') };
+  return { depleted: totals.size > 0 && [...totals.values()].every(value => value <= 0), insufficient: totals.size > 0 && [...totals.values()].every(value => value <= threshold), balance, bonus, cost: amounts('total_costs') };
 }
 class DshAccount {
   constructor(publish) { this.publish = publish; this.generation = 0; }

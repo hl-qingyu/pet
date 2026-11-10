@@ -57,8 +57,31 @@ test('dragon working animation retains its cadence and receives no whale frame c
 
 test('low balance plays sleep animation and clearing it restores idle; dragon remains unaffected',async()=>{
  const app=await renderer();app.account({insufficient:true});assert.equal(app.tick(0),'0px -1248px');
- app.sprite.events.pointerenter();assert.equal(app.tick(300),'-192px -1248px');
+ app.sprite.events.pointerenter();assert.equal(app.tick(300),'0px -832px');
  app.sprite.events.pointerleave();app.account({insufficient:false});assert.equal(app.tick(301),'0px 0px');
  app.account({error:'unavailable'});assert.equal(app.tick(302),'0px 0px');
  const dragon=await renderer('gpt-codex');dragon.account({insufficient:true});assert.equal(dragon.tick(0),'0px 0px');
+});
+
+test('working animation takes priority over low balance and sleep resumes after work',async()=>{
+ const app=await renderer();app.account({insufficient:true});app.state('running');
+ assert.equal(app.tick(0),'0px -1456px');
+ app.state('idle');assert.equal(app.tick(300),'0px -1248px');
+});
+
+test('low balance does not override interaction, completion or failure animations',async()=>{
+ for(const [state,row] of [['waving',3],['jumping',4],['failed',5],['waiting',6],['review',8]]){
+  const app=await renderer();app.account({insufficient:true});app.state(state);
+  assert.equal(app.tick(0),'0px '+(-row*208)+'px');
+ }
+});
+
+test('zero balance plays failure once then freezes and blocks other animations until recovery',async()=>{
+ const app=await renderer();app.account({depleted:true,insufficient:true});
+ assert.equal(app.tick(0),'0px -1040px');
+ for(let i=1;i<8;i++)assert.equal(app.tick(i*500),(-i*192)+'px -1040px');
+ app.state('running');app.sprite.events.pointerenter();
+ assert.equal(app.tick(5000),'-1344px -1040px');
+ app.account({error:'unavailable'});assert.equal(app.tick(6000),'-1344px -1040px');
+ app.account({depleted:false,insufficient:false});assert.equal(app.tick(6500),'0px -1456px');
 });

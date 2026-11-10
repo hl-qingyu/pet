@@ -21,3 +21,8 @@
 - 上游图集声明采用 MIT License，版权署名为 `Copyright (c) 2026 f0909172434`；许可原文保存在 `whale/LICENSE.txt`。
 - `whale/icon.png`、`whale/tray.png` 由同一图集的中性站姿（第 0 行第 6 列）裁剪、缩放制作。
 - 鲸鱼娘社区原角色署名：上善无形；DeepSeek 女仆二次设计：ZipZipPipe。上游图集许可不改变原角色与商标的权利归属。
+
+## 2026-11-10 动画更新
+- 前 9 行改用 https://github.com/gmskywalker/deepseek-fat-fish-codex-pet 的 deepseek-fat-fish/spritesheet.webp。
+- 最后 2 行（16 个鼠标跟随方向）逐像素保留原素材；新动作不再使用旧图集的水平位移补偿。
+- 新素材上游声明为非官方、非商业同人作品，仅供个人桌面定制和技术学习；不授予底层角色或商标的商业使用权。原 MIT 许可仅适用于原素材部分。

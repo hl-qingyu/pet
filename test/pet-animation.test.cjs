@@ -43,7 +43,7 @@ test('working whale holds frames longer while visual registration leaves the poi
   assert.equal(app.tick(259),'0px -1456px');
   assert.equal(app.tick(260),'-192px -1456px');
   const first=app.art.style.transform;app.tick(520);
-  assert.notEqual(app.art.style.transform,first);
+  assert.equal(app.art.style.transform,first);
   assert.equal(app.sprite.style.transform,undefined,'visual correction must not move the hover/drag target');
 });
 
@@ -52,3 +52,4 @@ test('dragon working animation retains its cadence and receives no whale frame c
   assert.equal(app.tick(0),'0px -1456px');assert.equal(app.tick(120),'-192px -1456px');
   assert.equal(app.art.style.transform,'translateX(0px)');
 });
+

@@ -412,7 +412,7 @@ async function smokeTest() {
       await waitFor(async () => store.value.chat.provider === provider && store.value.providers[provider].model === model &&
         await petWindow.webContents.executeJavaScript(`document.documentElement.dataset.theme === ${JSON.stringify(expected)}`) &&
         await panelWindow.webContents.executeJavaScript(`document.documentElement.dataset.theme === ${JSON.stringify(expected)}`));
-      const pet = await readTheme(petWindow, '#sprite'), panel = await readTheme(panelWindow, '.portrait-sprite');
+      const pet = await readTheme(petWindow, '#sprite-art'), panel = await readTheme(panelWindow, '.portrait-sprite');
       const persisted = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       const imagesMatch = [pet,panel].every(item => item.width === 1536 && item.height === 2288 && item.image.includes('/whale/') === (expected === 'whale'));
       const identity = await panelWindow.webContents.executeJavaScript(`({name:document.querySelector('#pet-name').value,personality:document.querySelector('#personality').value,greetings:document.querySelector('#greetings').value,rail:document.querySelector('#rail-name').textContent})`);
@@ -428,7 +428,7 @@ async function smokeTest() {
       const provider = document.querySelector('#provider'); provider.value = ${JSON.stringify(previewProvider)}; provider.dispatchEvent(new Event('change'));
     })()`);
     const preview = await readTheme(panelWindow, '.portrait-sprite');
-    const unchanged = await readTheme(petWindow, '#sprite');
+    const unchanged = await readTheme(petWindow, '#sprite-art');
     if (preview.theme !== previewTheme || unchanged.theme !== savedTheme || store.value.chat.provider !== 'custom') throw new Error('主题预览不应改变已保存的模型');
     themeChecks.push({preview: preview.theme, saved: unchanged.theme, pass: true});
     await saveTheme('deepseek', 'deepseek-flash', 'whale');

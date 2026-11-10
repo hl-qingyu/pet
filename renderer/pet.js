@@ -1,14 +1,18 @@
 const sprite = document.querySelector('#sprite'), scene = document.querySelector('#scene'), bubble = document.querySelector('#bubble');
+const art = document.querySelector('#sprite-art');
 const names = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'failed', 'waiting', 'running', 'review'];
-const times = [[1680,660,660,840,840,1920],[120,120,120,120,120,120,120,220],[120,120,120,120,120,120,120,220],[140,140,140,280],[140,140,140,140,280],[140,140,140,140,140,140,140,240],[150,150,150,150,150,260],[120,120,120,120,120,220],[150,150,150,150,150,280]];
-let config, state = 'idle', row = 0, frame = 0, next = 0, hover = false, drag = false, moved = false, dragStartX = 0, dragStartY = 0, direction = null, bubbleTimer, clickTimer;
-function cell(r,c) { sprite.style.backgroundPosition = `${-c*192}px ${-r*208}px`; }
+let config, state = 'idle', row = 0, frame = 0, next = 0, hover = false, hoverJumpDone = false, hoverJumpEnd = 0, drag = false, moved = false, dragStartX = 0, dragStartY = 0, direction = null, bubbleTimer, clickTimer;
+function cell(r,c) {
+  sprite.style.backgroundPosition = `${-c*192}px ${-r*208}px`;
+  art.style.transform = `translateX(${window.petMotion.offset(document.documentElement.dataset.theme,r,c)}px)`;
+}
 function choose(name) { const r = Math.max(0, names.indexOf(name)); if (row !== r) { row = r; frame = 0; next = 0; } }
 function say(text) { if (!text) return; clearTimeout(bubbleTimer); bubble.textContent = text; bubble.classList.add('visible'); bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), 6500); }
 function configure(value) {
   const theme = window.petThemes.resolve(value);
   if (document.documentElement.dataset.theme !== theme.id) {
     document.documentElement.dataset.theme = theme.id;
+    hoverJumpDone = false; hoverJumpEnd = 0;
     frame = 0; next = 0; cell(row, 0);
     clearTimeout(bubbleTimer); bubble.classList.remove('visible');
   }
@@ -16,15 +20,21 @@ function configure(value) {
   sprite.setAttribute('aria-label', `${window.petThemes.character(value).name}（${theme.label}）：单击互动，双击聊天，右键菜单，按住拖动`);
 }
 function animate(t) {
+  if (hoverJumpEnd && t >= hoverJumpEnd) hoverJumpDone = true;
   if (drag && moved) { /* drag decides the row */ }
-  else if (hover && state === 'idle') choose('jumping');
+  else if (hover && !hoverJumpDone && state === 'idle') choose('jumping');
   else choose(state);
   if (!hover && !drag && state === 'idle' && config?.pet.followMouse && direction !== null) cell(9 + Math.floor(direction/8),direction%8);
-  else if (t >= next) { cell(row,frame); next = t + times[row][frame]; frame = (frame+1) % times[row].length; }
+  else if (t >= next) {
+    const durations = window.petMotion.durations(document.documentElement.dataset.theme,row);
+    cell(row,frame); next = t + durations[frame];
+    if (row === 4 && frame === durations.length-1 && hover && state === 'idle' && document.documentElement.dataset.theme === 'whale') hoverJumpEnd = next;
+    frame = (frame+1) % durations.length;
+  }
   requestAnimationFrame(animate);
 }
-sprite.addEventListener('pointerenter', () => { hover = true; next = 0; });
-sprite.addEventListener('pointerleave', () => { hover = false; next = 0; });
+sprite.addEventListener('pointerenter', () => { hover = true; hoverJumpDone = false; hoverJumpEnd = 0; next = 0; });
+sprite.addEventListener('pointerleave', () => { hover = false; hoverJumpDone = false; hoverJumpEnd = 0; next = 0; });
 sprite.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   drag = true; moved = false; dragStartX = e.screenX; dragStartY = e.screenY; sprite.setPointerCapture(e.pointerId); window.dragon.send('pet:drag-start');

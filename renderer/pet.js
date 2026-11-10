@@ -8,7 +8,7 @@ function cell(r,c) {
   art.style.transform = `translateX(${window.petMotion.offset(document.documentElement.dataset.theme,r,c)}px)`;
 }
 function choose(name) { if (accountDepleted && document.documentElement.dataset.theme === 'whale') name = 'failed'; const r = Math.max(0, names.indexOf(name)); if (row !== r) { row = r; frame = 0; next = 0; } }
-function say(text) { if (!text) return; clearTimeout(bubbleTimer); bubble.textContent = text; bubble.classList.add('visible'); bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), 6500); }
+function say(text) { if (!text) return; clearTimeout(bubbleTimer); (document.querySelector('#bubble-text') || bubble).textContent = text.replace(/\s+/g, ' ').trim(); bubble.classList.add('visible'); bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), 6500); }
 function configure(value) {
   const theme = window.petThemes.resolve(value);
   if (document.documentElement.dataset.theme !== theme.id) {

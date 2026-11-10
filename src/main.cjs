@@ -192,11 +192,27 @@ function updateTray() {
   tray.setToolTip(`${getCharacter(store.value).name} · ${theme.label} · DragonDesk`);
   tray.setContextMenu(contextMenu());
 }
+function modelMenu() {
+  const items = Object.entries(store.value.providers).filter(([, provider]) => provider.model.trim() && provider.baseUrl.trim()).map(([id, provider]) => ({
+    label: provider.label + ' · ' + provider.model,
+    type: 'radio', checked: store.value.chat.provider === id, enabled: !request,
+    click: () => {
+      if (request || store.value.chat.provider === id) return;
+      try {
+        const next = structuredClone(store.value);
+        next.chat.provider = id;
+        store.save(next); applyConfig();
+      } catch { dialog.showErrorBox('切换模型失败', '无法保存模型设置，请检查配置文件后重试。'); }
+    },
+  }));
+  return [...items, ...(items.length ? [{ type: 'separator' }] : []), { label: '配置模型…', click: () => showPanel('settings') }];
+}
 function contextMenu() {
   return Menu.buildFromTemplate([
     { label: `和${getCharacter(store.value).name}聊天`, click: () => showPanel('chat') },
     { label: '显示 / 隐藏桌宠', click: togglePet },
     { label: '摸摸头', click: () => interaction() },
+    { label: '切换模型', submenu: modelMenu() },
     { type: 'separator' },
     { label: '设置与性格', click: () => showPanel('settings') },
     { label: '重新放到主屏幕', click: () => { const point = clampPoint(null, petSize()); petWindow.setPosition(point.x, point.y); persistPosition(); showPet(); } },
@@ -248,10 +264,10 @@ function setupIPC() {
       const messages = [...history.context(config.chat.historyMessages), { role: 'user', content: text.trim() }];
       const reply = await streamReply({ config, messages, signal: controller.signal, onDelta: delta => broadcast('chat:delta', { id, delta }) });
       history.append(text.trim(), reply, config.chat.saveHistory, character);
-      broadcast('chat:done', { id, text: reply }); status('review', reply.slice(0, 90), 3200);
+      broadcast('chat:done', { id, text: reply }); status('review', reply.length > 90 ? reply.slice(0, 90) + '…' : reply, 3200);
     } catch (error) {
       const message = userError(error, Object.values(config.providers).map(p => p.apiKey));
-      broadcast('chat:error', { id, message }); status(controller.signal.aborted ? 'idle' : 'failed', message.slice(0, 90), petState.enabled ? 3200 : 0);
+      broadcast('chat:error', { id, message }); status(controller.signal.aborted ? 'idle' : 'failed', message.length > 90 ? message.slice(0, 90) + '…' : message, petState.enabled ? 3200 : 0);
     } finally { clearTimeout(timeout); request = null; petState.refresh(); broadcast('chat:idle', { id }); }
     return { id };
   });

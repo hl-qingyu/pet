@@ -93,6 +93,7 @@ test('completion expires; historical completion is not replayed; failure differs
   await until(() => f.observer.snapshot().state === 'review'); f.advance(4001); assert.equal(f.observer.snapshot().state, 'idle');
   const old = state('completed'); old.turns[0].turnStartedAtMs = Date.now() - 100000; old.turns[0].durationMs = 100;
   const g = await fixture(t, old); g.observer.start(); await until(() => g.observer.snapshot().info.count === 1); assert.equal(g.observer.snapshot().state, 'idle');
+  assert.equal(g.observer.snapshot().sessions[0].completedAt, old.turns[0].turnStartedAtMs + old.turns[0].durationMs);
   const summary = summarize(state());
   applyPatches(summary, [{ op: 'replace', path: ['turns', 0, 'status'], value: 'failed' }, { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle' } }]);
   assert.equal(stateOf(summary), 'failed'); summary.turn.status = 'interrupted'; assert.equal(stateOf(summary), 'idle');

@@ -173,3 +173,113 @@ test('metadata for a different workspace is excluded without exposing its direct
   const status = JSON.stringify(f.observer.snapshot());
   assert.ok(!status.includes(f.cwd)); assert.ok(!status.includes('PRIVATE')); assert.equal(f.observer.snapshot().state, 'idle');
 });
+
+async function finishDiscovery(observer) {
+  do { await observer.run(); } while (observer.scanner || observer.recentScanner);
+}
+
+test('a running turn recovered from a large log overrides an older desktop idle snapshot in either source order', async t => {
+  const f = await fixture(t);
+  f.append({ type: 'response_item', payload: { content: 'PRIVATE'.repeat(60000) } });
+  f.append(event('item_completed', f.at()));
+  await f.observer.run();
+  const cli = f.observer.snapshot();
+  assert.equal(cli.state, 'running'); assert.equal(cli.sessions[0].startedAt, 0);
+  const desktop = { sessions: [{ hostId: 'local', id: 'session-a', turnId: 'older-turn', startedAt: f.at() - 10000,
+    completedAt: f.at() - 5000, state: 'idle', settled: true, at: f.at() + 1000 }] };
+  for (const sources of [['openai', 'codexCli'], ['codexCli', 'openai']]) {
+    const status = new OpenaiStatus();
+    for (const source of sources) status.update(source, source === 'openai' ? desktop : cli);
+    assert.equal(status.snapshot().state, 'running'); assert.equal(status.snapshot().info.count, 1);
+    f.append(event('task_complete', f.at())); await f.observer.run();
+    assert.equal(status.update('codexCli', f.observer.snapshot()).state, 'review');
+  }
+});
+
+test('a recovered CLI turn cannot override a provably newer desktop turn or a settlement of the same turn', () => {
+  const cli = { hostId: 'local', id: 's', turnId: 'recovered', startedAt: 0, state: 'running', at: 200 };
+  for (const desktop of [
+    { ...cli, turnId: 'newer', startedAt: 300, state: 'idle', at: 500 },
+    { ...cli, turnId: 'newer', startedAt: 100, completedAt: 250, state: 'idle', settled: true, at: 500 },
+    { ...cli, completedAt: 250, state: 'idle', settled: true, at: 500 },
+  ]) for (const order of [['openai', 'codexCli'], ['codexCli', 'openai']]) {
+    const status = new OpenaiStatus();
+    for (const source of order) status.update(source, { sessions: [source === 'openai' ? desktop : cli] });
+    assert.equal(status.snapshot().state, 'idle');
+  }
+  for (const order of [['openai', 'codexCli'], ['codexCli', 'openai']]) {
+    const status = new OpenaiStatus();
+    const old = { ...cli, turnId: 'older', startedAt: 100, completedAt: 0, state: 'idle', settled: true, at: 500 };
+    for (const source of order) status.update(source, { sessions: [source === 'openai' ? old : cli] });
+    assert.equal(status.snapshot().state, 'running');
+  }
+});
+
+test('excluded unchanged history is not parsed again until its bounded recheck interval', async t => {
+  const f = await fixture(t, 'app');
+  for (let i = 0; i < 40; i++) fs.writeFileSync(path.join(f.root, `rollout-excluded-${i}.jsonl`),
+    line({ type: 'session_meta', payload: { id: `excluded-${i}`, source: 'app', cwd: f.cwd } }));
+  let reads = 0; const original = f.observer.head.bind(f.observer);
+  f.observer.head = async handle => { reads++; return original(handle); };
+  await finishDiscovery(f.observer); assert.equal(reads, 41);
+  f.observer.nextDiscovery = f.observer.nextRecentDiscovery = 0;
+  await finishDiscovery(f.observer); assert.equal(reads, 41);
+  f.advance(LIMITS.recheckMs + 1);
+  await finishDiscovery(f.observer); assert.equal(reads, 82);
+  assert.ok(!JSON.stringify([...f.observer.excluded.values()]).includes('PRIVATE'));
+});
+
+test('cached stale logs are reconsidered when they grow even if mtime does not change', async t => {
+  const f = await fixture(t); f.advance(LIMITS.retentionMs + 1000);
+  await finishDiscovery(f.observer); assert.equal(f.observer.sessions.size, 0); assert.equal(f.observer.excluded.size, 1);
+  const stat = fs.statSync(f.file);
+  f.append(event('task_started', f.at(), 'resumed'));
+  fs.utimesSync(f.file, stat.atime, stat.mtime);
+  f.observer.nextDiscovery = 0; await finishDiscovery(f.observer);
+  assert.equal(f.observer.snapshot().state, 'running'); assert.equal(f.observer.snapshot().sessions[0].turnId, 'resumed');
+  assert.equal(f.observer.excluded.has(f.file), false);
+});
+
+test('excluded cache invalidates on same-size changes and replacement and expires even with unchanged timestamps', async t => {
+  const f = await fixture(t, 'app'); await finishDiscovery(f.observer);
+  const original = fs.readFileSync(f.file, 'utf8'), stat = fs.statSync(f.file);
+  const supported = original.replace('"source":"app"', '"source":"cli"');
+  assert.equal(Buffer.byteLength(supported), stat.size);
+  fs.writeFileSync(f.file, supported); fs.utimesSync(f.file, stat.atime, new Date(stat.mtimeMs + 1000));
+  f.observer.nextDiscovery = 0; await finishDiscovery(f.observer);
+  assert.equal(f.observer.snapshot().state, 'running');
+  f.observer.sessions.clear(); fs.writeFileSync(f.file, original); f.observer.nextDiscovery = 0;
+  await finishDiscovery(f.observer);
+  fs.renameSync(f.file, f.file + '.previous'); fs.writeFileSync(f.file, supported);
+  fs.utimesSync(f.file, stat.atime, stat.mtime); f.observer.nextDiscovery = 0;
+  await finishDiscovery(f.observer); assert.equal(f.observer.snapshot().state, 'running');
+  f.observer.sessions.clear(); fs.writeFileSync(f.file, original); f.observer.nextDiscovery = 0;
+  await finishDiscovery(f.observer);
+  const cached = fs.statSync(f.file);
+  fs.writeFileSync(f.file, supported); fs.utimesSync(f.file, cached.atime, cached.mtime);
+  f.advance(LIMITS.recheckMs + 1); await finishDiscovery(f.observer);
+  assert.equal(f.observer.snapshot().state, 'running');
+});
+
+test('recent date directories are checked while a historical discovery pass is still in progress', async t => {
+  const f = await fixture(t, 'app');
+  for (let i = 0; i < 64; i++) fs.writeFileSync(path.join(f.root, `rollout-history-${i}.jsonl`),
+    line({ type: 'session_meta', payload: { id: `history-${i}`, source: 'app', cwd: f.cwd } }));
+  await f.observer.run(); assert.ok(f.observer.scanner);
+  f.advance(LIMITS.discoverMs + 1);
+  const date = new Date(f.at()), day = path.join(f.root, String(date.getFullYear()),
+    String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0'));
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(day, 'rollout-new.jsonl'),
+    line({ type: 'session_meta', payload: { id: 'new-session', source: 'cli', cwd: f.cwd } }) + line(event('task_started', f.at())));
+  await f.observer.run();
+  assert.equal(f.observer.snapshot().sessions[0].id, 'new-session'); assert.ok(f.observer.scanner);
+});
+
+test('excluded history cache stays bounded and is released when the observer stops', async t => {
+  const f = await fixture(t, 'app');
+  for (let i = 0; i < LIMITS.excluded + 4; i++) fs.writeFileSync(path.join(f.root, `rollout-cache-${i}.jsonl`),
+    line({ type: 'session_meta', payload: { id: `cache-${i}`, source: 'app', cwd: f.cwd } }));
+  await finishDiscovery(f.observer); assert.equal(f.observer.excluded.size, LIMITS.excluded);
+  await f.observer.stop(); assert.equal(f.observer.excluded.size, 0); assert.equal(f.observer.recentScanner, null);
+});

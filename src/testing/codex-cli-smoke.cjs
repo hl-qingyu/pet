@@ -65,10 +65,27 @@ async function smokeCodexCli({ panelWindow, store, applyConfig, waitFor, getObse
   openaiFixture.update('completed'); await waitFor(() => getState() === 'review');
   openaiFixture.update('running', ['again']); await waitFor(() => getState() === 'waiting');
   await saveSources(false, false);
+  await waitFor(() => !getObservers().desktop && !getObservers().cli);
+  openaiFixture.update('completed');
+  Object.assign(openaiFixture.state.turns[0], { turnId: 'older-desktop-turn', turnStartedAtMs: Date.now() - 20000, durationMs: 1000 });
+  cliTurn = 'recovered-turn';
+  fs.writeFileSync(file, [
+    { type: 'session_meta', payload: { id: 'smoke-chat', source: 'cli', cwd: appRoot } },
+    { timestamp: new Date(Date.now() - 1000).toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: cliTurn } },
+    { type: 'response_item', payload: { content: 'PRIVATE_LARGE_LOG'.repeat(24000) } },
+    event('item_completed'),
+  ].map(value => JSON.stringify(value) + '\n').join(''));
+  await saveSources(true, true);
+  await waitFor(() => getRuntime().codexCli.count === 1 && getRuntime().openai.count === 1 && getState() === 'running');
+  if ([...getObservers().cli.sessions.values()][0]?.startedAt !== 0 || getRuntime().openaiSummary.count !== 1) {
+    throw new Error('大日志恢复及会话去重验证失败');
+  }
+  append('task_complete'); await waitFor(() => getState() === 'review');
+  await saveSources(false, false);
   await waitFor(() => !getObservers().desktop && !getObservers().cli && getState() === 'idle');
   store.save({ ...store.value, providers: { ...store.value.providers, [store.value.chat.provider]: {
     ...store.value.providers[store.value.chat.provider], apiKey: originalKey } } }); applyConfig();
   return { cliDefaultOff: true, allSourceSelections: true, noApiRequired: true, unchangedSourceRetained: true,
-    deduplicatedSessions: true, cliCompletion: true, cliWorkspace: true, dualRoleSwitch: true, pass: true };
+    deduplicatedSessions: true, cliCompletion: true, cliWorkspace: true, dualRoleSwitch: true, largeLogRecovery: true, pass: true };
 }
 module.exports = { smokeCodexCli };

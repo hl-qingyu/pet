@@ -324,6 +324,9 @@ class OpenaiObserver {
         (candidate === 'waiting' && age >= 3600000)) candidate = 'idle';
       if (session.owner && !session.blocked && session.summary && !expiredActivity) sessions.push({ hostId: session.hostId, id: session.id,
         turnId: session.summary.turn?.turnId, startedAt: session.summary.turn?.turnStartedAtMs || 0,
+        completedAt: ['completed', 'failed', 'interrupted'].includes(session.summary.turn?.status) &&
+          Number.isFinite(session.summary.turn?.turnStartedAtMs) && Number.isFinite(session.summary.turn?.durationMs) ?
+          session.summary.turn.turnStartedAtMs + session.summary.turn.durationMs : 0,
         settled: !['running', 'waiting'].includes(candidate) && ['completed', 'failed', 'interrupted'].includes(session.summary.turn?.status),
         state: candidate, at: session.at, bubble: this.options.showBubble ? WORDS[candidate] : undefined });
       if (RANK[candidate] > RANK[state] || (candidate === state && session.at > at)) { state = candidate; at = session.at; }

@@ -1,4 +1,18 @@
 const RANK = { idle: 0, review: 1, failed: 2, running: 3, waiting: 4 };
+const active = session => ['running', 'waiting'].includes(session.state);
+function prefer(candidate, previous) {
+  if (previous.turnId && candidate.turnId && previous.turnId !== candidate.turnId) {
+    if (previous.startedAt && candidate.startedAt && previous.startedAt !== candidate.startedAt) return candidate.startedAt > previous.startedAt;
+    const desktop = candidate.source === 'openai' ? candidate : previous;
+    const cli = candidate.source === 'codexCli' ? candidate : previous;
+    // A bounded CLI tail may contain activity without its task_started record.
+    // Actual desktop turn timestamps can still prove that the CLI turn is older.
+    if (cli.at && desktop.startedAt > cli.at) return candidate === desktop;
+    if (cli.at && desktop.settled && desktop.completedAt) return candidate === (desktop.completedAt >= cli.at ? desktop : cli);
+    if (active(cli) !== active(desktop)) return candidate === (active(cli) ? cli : desktop);
+  }
+  return candidate.source === 'openai';
+}
 
 // Private main-process summaries only. Neither identities nor paths reach the renderer.
 class OpenaiStatus {
@@ -28,11 +42,7 @@ class OpenaiStatus {
         candidate.state = 'idle'; candidate.bubble = undefined;
       }
       if (!previous) { sessions.set(key, candidate); continue; }
-      // A new CLI turn must not be hidden by a desktop snapshot of an older turn.
-      const differentTurns = previous.turnId && candidate.turnId && previous.turnId !== candidate.turnId;
-      if (differentTurns && previous.startedAt && candidate.startedAt && previous.startedAt !== candidate.startedAt) {
-        if (candidate.startedAt > previous.startedAt) sessions.set(key, candidate);
-      } else if (source === 'openai') sessions.set(key, candidate);
+      if (prefer(candidate, previous)) sessions.set(key, candidate);
     }
     let view = { state: 'idle', at: 0 };
     let running = 0, waiting = 0;

@@ -6,7 +6,8 @@ const { JsonMetadata } = require('./json-metadata.cjs');
 const { matchesWorkspace } = require('./openai-observer.cjs');
 
 const LIMITS = Object.freeze({ sessions: 32, chunk: 64 * 1024, batch: 1024 * 1024,
-  head: 1024 * 1024, tail: 256 * 1024, line: 16 * 1024 * 1024, discoverMs: 5000, retentionMs: 3600000 });
+  head: 1024 * 1024, tail: 256 * 1024, line: 16 * 1024 * 1024, discoverMs: 5000, retentionMs: 3600000,
+  excluded: 1024, recheckMs: 60000 });
 const KEYS = new Set(['type', 'timestamp', 'payload', 'id', 'session_id', 'thread_id', 'turn_id',
   'cwd', 'source', 'originator', 'thread_source', 'started_at', 'completed_at']);
 const WORDS = { running: 'Codex CLI 正在处理……', review: '这一步完成了。' };
@@ -66,24 +67,40 @@ function applyEvent(session, event, now, bootstrap = false) {
   // Approval, interruption and failure layouts are intentionally not guessed.
 }
 
-async function* filesIn(directory, depth = 0) {
+const identityOf = stat => `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+async function* filesIn(directory, depth = 0, maxDepth = 3) {
   const dirs = [], entries = await fs.promises.opendir(directory);
   for await (const entry of entries) {
     if (entry.isFile() && /^rollout-.*\.jsonl$/.test(entry.name)) yield path.join(directory, entry.name);
-    else if (entry.isDirectory() && depth < 3) {
+    else if (entry.isDirectory() && depth < maxDepth) {
       if (dirs.length >= 512) throw new Error('directory-limit');
       dirs.push(entry.name);
     }
   }
   // New date directories first; retain the iterator between bounded discovery batches.
-  for (const name of dirs.sort().reverse()) yield* filesIn(path.join(directory, name), depth + 1);
+  for (const name of dirs.sort().reverse()) yield* filesIn(path.join(directory, name), depth + 1, maxDepth);
+}
+async function* recentFilesIn(root, now) {
+  const directories = new Set();
+  for (const offset of [0, 86400000]) {
+    const date = new Date(now - offset);
+    for (const [year, month, day] of [[date.getFullYear(), date.getMonth() + 1, date.getDate()],
+      [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()]]) {
+      directories.add(path.join(root, String(year), String(month).padStart(2, '0'), String(day).padStart(2, '0')));
+    }
+  }
+  for (const directory of directories) {
+    try { yield* filesIn(directory, 0, 0); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
 }
 
 class CodexCliObserver {
   constructor(options = {}, onUpdate = () => {}, { now = Date.now } = {}) {
     this.options = { workspace: '', sessionsRoot: '', showBubble: true, pollMs: 500, activeSeconds: 600, ...options };
     this.root = this.options.sessionsRoot || path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
-    Object.assign(this, { onUpdate, now, sessions: new Map(), active: false, nextDiscovery: 0, last: '', discoveryProblem: '' });
+    Object.assign(this, { onUpdate, now, sessions: new Map(), excluded: new Map(), active: false,
+      nextDiscovery: 0, nextRecentDiscovery: 0, last: '', discoveryProblem: '' });
   }
   start() {
     if (this.active) return;
@@ -92,7 +109,8 @@ class CodexCliObserver {
   async stop() {
     this.active = false; clearTimeout(this.timer); this.timer = null;
     await this.inflight;
-    await this.scanner?.return(); this.scanner = null; this.sessions.clear();
+    await this.scanner?.return(); await this.recentScanner?.return();
+    this.scanner = this.recentScanner = null; this.sessions.clear(); this.excluded.clear();
   }
   tick() {
     if (!this.active) return;
@@ -126,7 +144,7 @@ class CodexCliObserver {
       if (!safeId(meta.id) || typeof meta.cwd !== 'string' || !path.isAbsolute(meta.cwd)) throw new Error('metadata-layout');
       const session = { file, id: meta.id, hostId: 'local', summary: { cwd: meta.cwd }, turnId: null,
         startedAt: 0, state: 'idle', at: 0, problem: false, offset: 0, size: stat.size, mtime: stat.mtimeMs,
-        identity: `${stat.dev}:${stat.ino}:${stat.birthtimeMs}` };
+        identity: identityOf(stat) };
       if (!matchesWorkspace(session, this.options.workspace)) return null;
       const start = Math.max(0, stat.size - LIMITS.tail);
       session.offset = start;
@@ -143,31 +161,59 @@ class CodexCliObserver {
       return session;
     } finally { await handle.close(); }
   }
+  rememberExcluded(file, stat, now, problem = false) {
+    this.excluded.delete(file);
+    this.excluded.set(file, { identity: stat.identity || identityOf(stat), size: stat.size,
+      mtime: stat.mtimeMs ?? stat.mtime, workspace: this.options.workspace, until: now + LIMITS.recheckMs, problem });
+    if (this.excluded.size > LIMITS.excluded) this.excluded.delete(this.excluded.keys().next().value);
+  }
   async discover(now) {
-    if (!this.scanner && now < this.nextDiscovery) return;
-    if (!this.scanner) { this.scanner = filesIn(this.root); this.discoveryProblem = ''; }
+    if (!this.scanner && now >= this.nextDiscovery) { this.scanner = filesIn(this.root); this.discoveryProblem = ''; }
+    if (!this.recentScanner && now >= this.nextRecentDiscovery) this.recentScanner = recentFilesIn(this.root, now);
     try {
       let inspected = 0;
-      for (let entries = 0; entries < 256 && inspected < 8 && this.active; entries++) {
-        const next = await this.scanner.next();
-        if (next.done) { this.scanner = null; this.nextDiscovery = now + LIMITS.discoverMs; return; }
+      for (let entries = 0; entries < 256 && inspected < 8 && this.active && (this.recentScanner || this.scanner); entries++) {
+        const recent = Boolean(this.recentScanner), next = await (this.recentScanner || this.scanner).next();
+        if (next.done) {
+          if (recent) { this.recentScanner = null; this.nextRecentDiscovery = now + LIMITS.discoverMs; }
+          else { this.scanner = null; this.nextDiscovery = now + LIMITS.discoverMs; }
+          continue;
+        }
         if (this.sessions.has(next.value)) continue;
-        inspected++;
-        let session;
-        try { session = await this.initialize(next.value, now); }
-        catch (error) { if (error.code !== 'ENOENT') this.discoveryProblem = '部分 CLI 日志布局不支持或无法读取'; continue; }
+        let session, stat;
+        try {
+          stat = await fs.promises.stat(next.value);
+          if (!stat.isFile()) continue;
+          const cached = this.excluded.get(next.value);
+          if (cached && now < cached.until && cached.workspace === this.options.workspace && cached.identity === identityOf(stat) &&
+            cached.size === stat.size && cached.mtime === stat.mtimeMs) {
+            if (cached.problem) this.discoveryProblem = cached.problem === 'capacity' ?
+              'CLI 会话数量超过资源上限' : '部分 CLI 日志布局不支持或无法读取';
+            continue;
+          }
+          this.excluded.delete(next.value); inspected++;
+          session = await this.initialize(next.value, now);
+        } catch (error) {
+          if (error.code !== 'ENOENT') {
+            this.discoveryProblem = '部分 CLI 日志布局不支持或无法读取';
+            if (stat) this.rememberExcluded(next.value, stat, now, true);
+          } else this.excluded.delete(next.value);
+          continue;
+        }
         if (!this.active) return;
-        if (!session) continue;
+        if (!session) { this.rememberExcluded(next.value, stat, now); continue; }
         if (this.sessions.size >= LIMITS.sessions) {
           this.discoveryProblem = 'CLI 会话数量超过资源上限';
           const oldest = [...this.sessions.values()].reduce((a, b) => a.at < b.at ? a : b);
-          if (oldest.at >= session.at) continue;
+          if (oldest.at >= session.at) { this.rememberExcluded(next.value, stat, now, 'capacity'); continue; }
+          this.rememberExcluded(oldest.file, oldest, now, 'capacity');
           this.sessions.delete(oldest.file);
         }
         this.sessions.set(session.file, session);
       }
     } catch (error) {
-      await this.scanner?.return(); this.scanner = null; this.nextDiscovery = now + LIMITS.discoverMs;
+      await this.scanner?.return(); await this.recentScanner?.return(); this.scanner = this.recentScanner = null;
+      this.nextDiscovery = this.nextRecentDiscovery = now + LIMITS.discoverMs;
       this.discoveryProblem = error.code === 'ENOENT' ? '未找到 CLI 会话目录' : 'CLI 会话目录读取降级';
     }
   }
@@ -187,7 +233,7 @@ class CodexCliObserver {
   async visit(session) {
     const handle = await fs.promises.open(session.file, 'r');
     try {
-      const stat = await handle.stat(), identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+      const stat = await handle.stat(), identity = identityOf(stat);
       if (!stat.isFile() || identity !== session.identity || stat.size < session.size ||
         (stat.size === session.offset && stat.mtimeMs !== session.mtime) ||
         await this.fingerprint(handle, session.offset) !== session.anchor) {
@@ -231,7 +277,9 @@ class CodexCliObserver {
       if (!this.active) return;
       try { await this.visit(session); }
       catch (error) { if (error.code === 'ENOENT') this.sessions.delete(session.file); else this.invalidate(session); }
-      if (this.now() - session.at > LIMITS.retentionMs) this.sessions.delete(session.file);
+      if (this.now() - session.at > LIMITS.retentionMs) {
+        this.rememberExcluded(session.file, session, this.now()); this.sessions.delete(session.file);
+      }
     }
     this.publish();
   }

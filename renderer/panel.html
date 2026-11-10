@@ -55,12 +55,20 @@
         <p class="hint">DeepSeek 模型使用独立的 DSH 监听配置，保存后生效。只读本机日志，不保存或展示对话内容；新会话可能需要约 5 秒发现。</p>
         <p class="hint" id="dsh-status" role="status">未开启</p>
       </article>
-      <article class="card hidden" id="openai-integration-card"><div class="card-heading"><span>04</span><h3>ChatGPT 桌面端</h3></div>
-        <div class="toggles"><label class="toggle"><span>显示 OpenAI 执行状态<small>跟随桌面端的聊天和 Codex / Work 任务</small></span><input id="openai-enabled" type="checkbox"></label><label class="toggle"><span>状态气泡<small>只显示通用提示</small></span><input id="openai-bubble" type="checkbox"></label></div>
-        <label>只监听指定工作区（可选）<input id="openai-workspace" maxlength="1000" placeholder="填写本地项目目录，留空监听全部会话"></label>
+      <article class="card hidden" id="openai-integration-card"><div class="card-heading"><span>04</span><h3>OpenAI 执行状态</h3></div>
+        <p class="hint">监听来源可单选或多选，全部取消则关闭。无需配置聊天 API Key，保存后生效。</p>
+        <div class="toggles"><label class="toggle"><span>桌面端<small>跟随聊天和 Codex / Work 任务</small></span><input id="openai-enabled" type="checkbox"></label><label class="toggle"><span>Codex CLI<small>只读本机终端会话日志，无需 Hook</small></span><input id="cli-enabled" type="checkbox"></label></div>
+        <label class="toggle"><span>桌面端状态气泡<small>只显示通用提示</small></span><input id="openai-bubble" type="checkbox"></label>
+        <label>桌面端工作区（可选）<input id="openai-workspace" maxlength="1000" placeholder="填写本地项目目录，留空监听全部会话"></label>
         <p class="hint">填写后只监听本机该目录及其子目录的会话；没有本地目录信息的普通聊天会被排除。</p>
-        <p class="hint">OpenAI / GPT / Codex 模型使用独立的 ChatGPT 监听配置，保存后生效。不保存或展示对话内容，本机桌面端需要保持运行。</p>
+        <p class="hint">桌面端需要保持运行。两个来源分别筛选工作区，同一会话按标识去重。</p>
         <p class="hint" id="openai-status" role="status">未开启</p>
+        <label class="toggle"><span>CLI 状态气泡<small>只显示运行和本轮完成提示</small></span><input id="cli-bubble" type="checkbox"></label>
+        <label>CLI 工作区（可选）<input id="cli-workspace" maxlength="1000" placeholder="填写本地项目目录，留空监听全部终端会话"></label>
+        <details><summary>CLI 日志目录</summary><label>会话根目录（可选）<input id="cli-root" maxlength="1000" placeholder="留空使用 CODEX_HOME/sessions 或 ~/.codex/sessions"></label></details>
+        <p class="hint">兼容本机 Codex TUI 会话。日志可能延迟写入；等待审批、异常退出等未确认的状态不作推测。不保存或展示对话内容。</p>
+        <p class="hint" id="cli-status" role="status">未开启</p>
+        <p class="hint" id="openai-summary" role="status"></p>
       </article>
       <div class="config-footer"><div><strong>所有设置，一个配置文件。</strong><code id="config-path"></code></div><button id="open-config" class="subtle">打开配置文件 ↗</button></div>
     </div>

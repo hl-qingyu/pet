@@ -81,6 +81,8 @@ function runtime(value) {
     if (shortcutRecorder?.ready && !shortcutRuntime.active && shortcutRuntime.revision >= shortcutRecorder.revision) endShortcutRecording(false, true, '键盘录入已结束，快捷键设置未改变。');
   }
   $('#shortcut-status').textContent = value.shortcut || ''; $('#startup-status').textContent = value.startup || ''; $('#dsh-status').textContent = value.dsh?.message || '未开启'; $('#openai-status').textContent = value.openai?.message || '未开启'; if (value.error) notice(value.error,true);
+  $('#cli-status').textContent = value.codexCli?.message || '未开启';
+  $('#openai-summary').textContent = value.openaiSummary?.message || '';
 }
 function effortOptions(value = 'default') {
   const deepseek = $('#reasoning-format').value === 'deepseek';
@@ -145,6 +147,9 @@ function fill(value) {
   $('#dsh-root').value = dsh.sessionsRoot; $('#dsh-workspace').value = dsh.workspace;
   $('#openai-enabled').checked = config.integrations.openai.enabled; $('#openai-bubble').checked = config.integrations.openai.showBubble;
   $('#openai-workspace').value = config.integrations.openai.workspace;
+  const cli = config.integrations.codexCli;
+  $('#cli-enabled').checked = cli.enabled; $('#cli-bubble').checked = cli.showBubble;
+  $('#cli-workspace').value = cli.workspace; $('#cli-root').value = cli.sessionsRoot;
   setBusy(busy);
 }
 function readForm() {
@@ -158,6 +163,8 @@ function readForm() {
     sessionsRoot: $('#dsh-root').value.trim(), workspace: $('#dsh-workspace').value.trim() });
   Object.assign(next.integrations.openai, { enabled: $('#openai-enabled').checked, showBubble: $('#openai-bubble').checked,
     workspace: $('#openai-workspace').value.trim() });
+  Object.assign(next.integrations.codexCli, { enabled: $('#cli-enabled').checked, showBubble: $('#cli-bubble').checked,
+    workspace: $('#cli-workspace').value.trim(), sessionsRoot: $('#cli-root').value.trim() });
   return next;
 }
 async function save() {

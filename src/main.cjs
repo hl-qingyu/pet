@@ -8,6 +8,7 @@ const { History } = require('./history.cjs');
 const { streamReply, userError } = require('./backends/api.cjs');
 const { resolve: resolveTheme, character: getCharacter, integration: selectedIntegration } = require('../renderer/themes.js');
 const { PetState } = require('./pet-state.cjs');
+const { OpenaiStatus } = require('./backends/openai-status.cjs');
 
 app.setName('DragonDesk');
 const appRoot = path.resolve(__dirname, '..');
@@ -26,12 +27,14 @@ if (!ownLock) app.quit();
 
 let petWindow, panelWindow, tray, store, history, request, unwatch, currentShortcut = '', cursorTimer;
 let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
-let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' } };
+let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' }, codexCli: { count: 0, degraded: false, message: '未开启' } };
 let appliedTheme;
 let accountSnapshot = null, accountEnabled = false;
 const dshAccount = new (require('./backends/dsh-account.cjs').DshAccount)(value => { accountSnapshot = value; broadcast('dsh:account', value); });
 let shortcutRecording = false, shortcutRecordingRevision = 0, shortcutRecordingTimer;
-let dshObserver, openaiObserver, integrationSignature = '', integrationGeneration = 0, integrationStopping = Promise.resolve();
+let dshObserver, openaiObserver, cliObserver, integrationStopping = Promise.resolve();
+const integrationSlots = new Map(), openaiStatus = new OpenaiStatus();
+let dshSnapshot = { state: 'idle' };
 const petState = new PetState(payload => { currentState = payload.state; broadcast('pet:state', payload); }, () => Boolean(request));
 
 function log(message) {
@@ -40,42 +43,64 @@ function log(message) {
 function send(window, channel, value) { if (window && !window.isDestroyed() && !window.webContents.isLoading()) window.webContents.send(channel, value); }
 function broadcast(channel, value) { send(petWindow, channel, value); send(panelWindow, channel, value); }
 function status(state, bubble, resetMs = 0) { petState.local(state, bubble, resetMs); }
+function refreshExternal() {
+  const combined = openaiStatus.snapshot();
+  runtime.openaiSummary = { ...combined.info, message: selectedIntegration(store.value) !== 'openai' ? '' :
+    store.value.integrations.openai.enabled || store.value.integrations.codexCli.enabled ? combined.info.message : '未开启监听' };
+  petState.external(selectedIntegration(store.value) === 'dsh' ? dshSnapshot : combined);
+}
 function applyIntegration() {
-  const selected = selectedIntegration(store.value), options = store.value.integrations[selected];
+  const selected = selectedIntegration(store.value), integrations = store.value.integrations;
   const provider = store.value.providers[store.value.chat.provider];
   const hasApi = Boolean(provider?.apiKey?.trim() && provider?.baseUrl?.trim() && provider?.model?.trim());
-  const showAccount = selected === 'dsh' && hasApi && options.showAccount === true && !smoke;
-  const accountKey = JSON.stringify([showAccount, options.balanceWarning ?? 0]);
-  if (accountKey !== accountEnabled) { accountEnabled = accountKey; dshAccount.configure(showAccount, options.balanceWarning ?? 0); }
-  const inactive = selected === 'dsh' ? 'openai' : 'dsh';
-  runtime[inactive] = { count: 0, degraded: false, message: store.value.integrations[inactive].enabled ? `已启用，切换到${inactive === 'dsh' ? '鲸鱼娘' : '龙娘'}后监听` : '未开启' };
-  const signature = JSON.stringify({ selected, options, hasApi });
-  if (signature === integrationSignature) return;
-  integrationSignature = signature;
-  const generation = ++integrationGeneration;
-  const previous = dshObserver || openaiObserver;
-  if (previous) integrationStopping = previous.stop();
-  dshObserver = openaiObserver = null;
-  petState.external({ state: 'idle' }); petState.enable(options.enabled && hasApi);
-  runtime[selected] = { count: 0, degraded: false, message: !hasApi ? '未配置 API，运行状态监听已停止' : options.enabled ? `等待 ${selected === 'dsh' ? 'DSH 会话' : 'ChatGPT 桌面端连接'}……` : '未开启' };
-  if (!options.enabled || !hasApi) { broadcast('runtime:updated', runtime); return; }
-  integrationStopping.then(() => {
-    if (quitting || generation !== integrationGeneration) return;
-    const Observer = selected === 'dsh' ? require('./backends/dsh-observer.cjs').DshObserver : require('./backends/openai-observer.cjs').OpenaiObserver;
+  const showAccount = selected === 'dsh' && hasApi && integrations.dsh.showAccount === true && !smoke;
+  const accountKey = JSON.stringify([showAccount, integrations.dsh.balanceWarning ?? 0]);
+  if (accountKey !== accountEnabled) { accountEnabled = accountKey; dshAccount.configure(showAccount, integrations.dsh.balanceWarning ?? 0); }
+  const pending = [], stops = [];
+  for (const id of ['dsh', 'openai', 'codexCli']) {
+    const options = integrations[id], appropriate = (selected === 'dsh') === (id === 'dsh');
+    const enabled = appropriate && options.enabled && (id !== 'dsh' || hasApi);
+    const key = enabled ? JSON.stringify(options) : '';
+    const previous = integrationSlots.get(id);
+    if (!enabled) runtime[id] = { count: 0, degraded: false, message: !appropriate && options.enabled ?
+      `已启用，切换到${id === 'dsh' ? '鲸鱼娘' : '龙娘'}后监听` : appropriate && options.enabled && id === 'dsh' && !hasApi ?
+        '未配置 API，运行状态监听已停止' : '未开启' };
+    if (previous?.key === key) continue;
+    const slot = { key, observer: null }; integrationSlots.set(id, slot);
+    if (previous?.observer) stops.push(previous.observer.stop());
+    if (id === 'dsh') { dshObserver = null; dshSnapshot = { state: 'idle' }; }
+    else { openaiStatus.clear(id); if (id === 'openai') openaiObserver = null; else cliObserver = null; }
+    if (!enabled) continue;
+    runtime[id] = { count: 0, degraded: false, message: id === 'dsh' ? '等待 DSH 会话……' : id === 'openai' ?
+      '等待 ChatGPT 桌面端连接……' : '等待 CLI 会话日志……' };
+    pending.push({ id, slot, options });
+  }
+  // Keep unchanged sources alive. Role changes wait until all obsolete readers stop.
+  integrationStopping = Promise.all([integrationStopping, ...stops]).then(() => {}, () => {});
+  petState.enable(selected === 'dsh' ? integrations.dsh.enabled && hasApi : integrations.openai.enabled || integrations.codexCli.enabled);
+  refreshExternal(); broadcast('runtime:updated', runtime);
+  for (const { id, slot, options } of pending) integrationStopping.then(() => {
+    if (quitting || integrationSlots.get(id) !== slot) return;
+    const Observer = id === 'dsh' ? require('./backends/dsh-observer.cjs').DshObserver : id === 'openai' ?
+      require('./backends/openai-observer.cjs').OpenaiObserver : require('./backends/codex-cli-observer.cjs').CodexCliObserver;
     const observer = new Observer(options, snapshot => {
-      if (quitting || generation !== integrationGeneration) return;
-      const changed = JSON.stringify(runtime[selected]) !== JSON.stringify(snapshot.info);
-      runtime[selected] = snapshot.info; petState.external(snapshot);
-      if (changed) broadcast('runtime:updated', runtime);
+      if (quitting || integrationSlots.get(id) !== slot) return;
+      const before = JSON.stringify([runtime[id], runtime.openaiSummary]);
+      runtime[id] = snapshot.info;
+      if (id === 'dsh') dshSnapshot = snapshot; else openaiStatus.update(id, snapshot);
+      refreshExternal();
+      if (before !== JSON.stringify([runtime[id], runtime.openaiSummary])) broadcast('runtime:updated', runtime);
     });
-    if (selected === 'dsh') dshObserver = observer; else openaiObserver = observer;
+    slot.observer = observer;
+    if (id === 'dsh') dshObserver = observer; else if (id === 'openai') openaiObserver = observer; else cliObserver = observer;
     observer.start();
   }).catch(() => {
-    if (generation !== integrationGeneration || quitting) return;
-    runtime[selected] = { count: 0, degraded: true, message: '桌面端状态读取失败' };
-    broadcast('runtime:updated', runtime);
+    if (quitting || integrationSlots.get(id) !== slot) return;
+    runtime[id] = { count: 0, degraded: true, message: '状态来源启动失败' };
+    refreshExternal(); broadcast('runtime:updated', runtime);
   });
 }
+
 function petSize() { return { width: Math.round(290 * store.value.pet.scale), height: Math.round(420 * store.value.pet.scale) }; }
 function clampPoint(point, size) {
   const display = point ? screen.getDisplayNearestPoint({ x: Math.round(point.x), y: Math.round(point.y) }) : screen.getPrimaryDisplay();
@@ -355,7 +380,9 @@ async function smokeTest() {
       const original={enabled:document.querySelector('#dsh-enabled').checked,bubble:document.querySelector('#dsh-bubble').checked,
         root:document.querySelector('#dsh-root').value,workspace:document.querySelector('#dsh-workspace').value,
         openai:document.querySelector('#openai-enabled').checked,openaiBubble:document.querySelector('#openai-bubble').checked,
-        openaiWorkspace:document.querySelector('#openai-workspace').value};
+        openaiWorkspace:document.querySelector('#openai-workspace').value,
+        cli:document.querySelector('#cli-enabled').checked,cliBubble:document.querySelector('#cli-bubble').checked,
+        cliRoot:document.querySelector('#cli-root').value,cliWorkspace:document.querySelector('#cli-workspace').value};
       selectModel('deepseek-mock-model');
       const deepseekOnly=visible('#dsh-integration-card')&&!visible('#openai-integration-card');
       document.querySelector('#dsh-enabled').checked=true;document.querySelector('#dsh-bubble').checked=false;
@@ -364,18 +391,24 @@ async function smokeTest() {
       const openaiOnly=visible('#openai-integration-card')&&!visible('#dsh-integration-card');
       document.querySelector('#openai-enabled').checked=false;document.querySelector('#openai-bubble').checked=true;
       document.querySelector('#openai-workspace').value='openai-draft-workspace';
+      document.querySelector('#cli-enabled').checked=true;document.querySelector('#cli-bubble').checked=false;
+      document.querySelector('#cli-root').value='cli-draft-root';document.querySelector('#cli-workspace').value='cli-draft-workspace';
       selectModel('deepseek-mock-model');
       const dshDraft=document.querySelector('#dsh-enabled').checked&&!document.querySelector('#dsh-bubble').checked&&
         document.querySelector('#dsh-root').value==='dsh-draft-root'&&document.querySelector('#dsh-workspace').value==='dsh-draft-workspace';
       selectModel('gateway/codex-latest');
       const openaiDraft=!document.querySelector('#openai-enabled').checked&&document.querySelector('#openai-bubble').checked&&
         document.querySelector('#openai-workspace').value==='openai-draft-workspace'&&visible('#openai-integration-card')&&!visible('#dsh-integration-card');
+      const cliDraft=document.querySelector('#cli-enabled').checked&&!document.querySelector('#cli-bubble').checked&&
+        document.querySelector('#cli-root').value==='cli-draft-root'&&document.querySelector('#cli-workspace').value==='cli-draft-workspace';
       document.querySelector('#dsh-enabled').checked=original.enabled;document.querySelector('#dsh-bubble').checked=original.bubble;
       document.querySelector('#dsh-root').value=original.root;document.querySelector('#dsh-workspace').value=original.workspace;
       document.querySelector('#openai-enabled').checked=original.openai;document.querySelector('#openai-bubble').checked=original.openaiBubble;
       document.querySelector('#openai-workspace').value=original.openaiWorkspace;
+      document.querySelector('#cli-enabled').checked=original.cli;document.querySelector('#cli-bubble').checked=original.cliBubble;
+      document.querySelector('#cli-root').value=original.cliRoot;document.querySelector('#cli-workspace').value=original.cliWorkspace;
       selectModel(originalModel);document.querySelector('#save').click();
-      return {deepseekOnly,openaiOnly,dshDraft,openaiDraft};
+      return {deepseekOnly,openaiOnly,dshDraft,openaiDraft,cliDraft};
     })()`);
     await waitFor(() => panelWindow.webContents.executeJavaScript(`!document.querySelector('#save').disabled && document.querySelector('#settings-message').textContent.includes('已保存')`));
     if (!Object.values(integrationForms).every(Boolean)) throw new Error('按模型显示监听配置或独立草稿验证失败');
@@ -611,13 +644,16 @@ async function smokeTest() {
       if (JSON.stringify([...openaiObserver.sessions.values()]).includes('PRIVATE_SMOKE_TEXT')) throw new Error('OpenAI 正文不应被保留');
       showPanel('settings'); await panelWindow.webContents.executeJavaScript(`document.querySelector('#openai-status').scrollIntoView({block:'center'});`);
       fs.writeFileSync(path.join(dataRoot, 'openai-settings-smoke.png'), (await panelWindow.webContents.capturePage()).toPNG());
+      themeChecks.push(await require('./testing/codex-cli-smoke.cjs').smokeCodexCli({ panelWindow, store, applyConfig, waitFor,
+        getObservers: () => ({ desktop: openaiObserver, cli: cliObserver }), getState: () => currentState,
+        getRuntime: () => runtime, openaiFixture, dataRoot, appRoot, saveTheme }));
       await saveOpenai(false);
       await saveTheme('custom', 'deepseek-mock-model', 'whale');
       await saveDsh(false);
       await waitFor(() => !dshObserver && !openaiObserver && currentState === 'idle');
       themeChecks.push({ openaiDefaultOff: true, openaiSettings: true, openaiSyntheticLocalProtocol: true,
         openaiWorkspaceFilter: true, independentWorkspaces: true, openaiInput: true, openaiCompletion: true,
-        openaiFailure: true, roleBoundSources: true, oneObserver: true, noTranscriptRetained: true, pass: true });
+        openaiFailure: true, roleBoundSources: true, noTranscriptRetained: true, pass: true });
     } finally { await openaiFixture.close(); }
     await saveTheme('custom', initialModel, initialModel.startsWith('deepseek') ? 'whale' : 'dragon');
     // Focus-changing keyboard tests run after cursor animation checks so their
@@ -664,5 +700,5 @@ if (ownLock) app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => { quitting = true; dshAccount.stop(); ++integrationGeneration; dshObserver?.stop(); openaiObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
+app.on('before-quit', () => { quitting = true; dshAccount.stop(); dshObserver?.stop(); openaiObserver?.stop(); cliObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
 app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); clearTimeout(shortcutRecordingTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

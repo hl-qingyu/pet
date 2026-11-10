@@ -313,16 +313,23 @@ class OpenaiObserver {
   }
   snapshot() {
     let state = 'idle', at = 0;
+    const sessions = [];
     for (const session of this.sessions.values()) {
       if (!matchesWorkspace(session, this.options.workspace)) continue;
       const age = this.now() - session.at;
       let candidate = session.state;
+      const expiredActivity = (candidate === 'running' && age >= this.options.activeSeconds * 1000) ||
+        (candidate === 'waiting' && age >= 3600000);
       if ((['review', 'failed'].includes(candidate) && age >= 4000) || (candidate === 'running' && age >= this.options.activeSeconds * 1000) ||
         (candidate === 'waiting' && age >= 3600000)) candidate = 'idle';
+      if (session.owner && !session.blocked && session.summary && !expiredActivity) sessions.push({ hostId: session.hostId, id: session.id,
+        turnId: session.summary.turn?.turnId, startedAt: session.summary.turn?.turnStartedAtMs || 0,
+        settled: !['running', 'waiting'].includes(candidate) && ['completed', 'failed', 'interrupted'].includes(session.summary.turn?.status),
+        state: candidate, at: session.at, bubble: this.options.showBubble ? WORDS[candidate] : undefined });
       if (RANK[candidate] > RANK[state] || (candidate === state && session.at > at)) { state = candidate; at = session.at; }
     }
     const count = [...this.sessions.values()].filter(session => session.owner && !session.blocked && matchesWorkspace(session, this.options.workspace)).length;
-    return { state, bubble: this.options.showBubble ? WORDS[state] : undefined,
+    return { state, bubble: this.options.showBubble ? WORDS[state] : undefined, sessions,
       info: { count, connected: this.ready, degraded: Boolean(this.warning), message: this.warning || (!this.ready ? '等待 ChatGPT 桌面端连接……' : count ? `已连接，正在监听 ${count} 个 OpenAI 会话` : this.options.workspace ? '已连接，等待匹配工作区的本机会话……' : '已连接，等待桌面端会话……') } };
   }
   publish() {

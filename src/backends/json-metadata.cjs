@@ -11,8 +11,8 @@ const KEYS = new Set(['type', 'method', 'version', 'requestId', 'resultType', 'e
 // objects still have their grammar checked. Each frame produces only a bounded
 // temporary metadata tree, including patch paths, never a transcript object.
 class JsonMetadata {
-  constructor({ maxNodes = 4096, maxString = 256, maxDepth = 64 } = {}) {
-    Object.assign(this, { maxNodes, maxString, maxDepth });
+  constructor({ maxNodes = 4096, maxString = 256, maxDepth = 64, keys = KEYS } = {}) {
+    Object.assign(this, { maxNodes, maxString, maxDepth, keys });
     this.decoder = new StringDecoder('utf8'); this.stack = []; this.result = undefined;
     this.rootDone = false; this.nodes = 0; this.token = ''; this.string = false; this.escape = false;
     this.unicode = 0; this.tooLong = false; this.atom = false;
@@ -26,7 +26,7 @@ class JsonMetadata {
     if (!['value', 'firstValue'].includes(parent.expect)) throw new Error('expected-value');
     const key = parent.kind === 'array' ? parent.index : parent.key;
     let keep = parent.keep && (parent.kind === 'array' ||
-      (parent.name === 'entitiesByKey' ? /^(?:turn:|legacy:|pending:)/.test(key) : KEYS.has(key)));
+      (parent.name === 'entitiesByKey' ? /^(?:turn:|legacy:|pending:)/.test(key) : this.keys.has(key)));
     if (key === 'params' && this.stack.length !== 1) keep = false;
     if (key === 'value' && Array.isArray(parent.out?.path) &&
       parent.out.path.some(part => ['items', 'content', 'input', 'params', 'title', 'text', 'summary', 'acceptedTextChanges'].includes(part))) keep = false;

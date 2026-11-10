@@ -94,6 +94,15 @@ function validate(config) {
       range(openai.activeSeconds, 10, 3600, 'openai.activeSeconds');
       check(Number.isInteger(openai.activeSeconds), 'openai.activeSeconds 必须是整数');
     }
+    if (config.integrations.codexCli !== undefined) {
+      const cli = config.integrations.codexCli;
+      check(object(cli), 'integrations.codexCli 必须是对象');
+      for (const key of ['enabled', 'showBubble']) check(typeof cli[key] === 'boolean', `codexCli.${key} 必须是布尔值`);
+      for (const key of ['sessionsRoot', 'workspace']) text(cli[key], `codexCli.${key}`, 1000);
+      for (const [key, min, max] of [['pollMs', 200, 5000], ['activeSeconds', 10, 3600]]) {
+        range(cli[key], min, max, `codexCli.${key}`); check(Number.isInteger(cli[key]), `codexCli.${key} 必须是整数`);
+      }
+    }
   }
   return config;
 }

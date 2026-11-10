@@ -4,6 +4,8 @@ const { character:getCharacter }=require('../renderer/themes.js');
 const root=path.resolve(__dirname,'..'),directory=path.join(root,'work','ui-smoke');fs.mkdirSync(directory,{recursive:true});
 const reportPath=path.join(directory,'data','smoke-report.json');if(fs.existsSync(reportPath))fs.unlinkSync(reportPath);
 const config=structuredClone(require('../config.example.json'));config.chat.provider='custom';config.chat.saveHistory=false;config.providers.custom.model='mock-model';config.providers.custom.apiKey='local-smoke-test-key';
+// Explicit option for environments whose native window manager rejects topmost windows.
+if(process.argv.includes('--no-topmost'))config.pet.alwaysOnTop=false;
 if(process.argv.includes('--whale'))config.providers.custom.model='deepseek-mock-model';
 config.providers.custom.reasoning={format:'openai',effort:'high'};
 const server=http.createServer(async(req,res)=>{

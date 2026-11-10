@@ -1,6 +1,6 @@
 # ChatGPT / OpenAI 桌面端状态接入
 
-> 2026-11-10：已实现、已更新原 Windows EXE 并通过成品验证。默认关闭、低内存优先。龙娘绑定 OpenAI，鲸鱼娘绑定 DSH。
+> 2026-11-10：桌面端基础接入已实现。后续增加桌面端／CLI 双来源配置，见下文补充；旧版验证结果不代表新增 CLI 的现场验收。
 
 ## 范围与来源
 
@@ -69,3 +69,11 @@ workspace 为本地项目目录，留空监听全部；填写后只匹配本机�
 
 - [桌面通知与会话状态](https://learn.chatgpt.com/docs/notifications?surface=app)
 - [App Server 的线程状态](https://learn.chatgpt.com/docs/app-server)
+
+## 双来源配置补充（2026-11-10）
+
+- 龙娘可独立勾选桌面端、Codex CLI，支持单选、多选、全部关闭；鲸鱼娘继续使用 DSH。本文原有“一个监听器”描述只适用于旧版本。
+- 保留 `integrations.openai`，新增 `integrations.codexCli`，默认关闭。CLI 的工作区、气泡、会话根目录独立保存；OpenAI 两来源均不要求聊天 API Key。
+- CLI 只读终端来源的 JSONL，以文件长度跟随增长，投影解析跳过正文，使用明确的开始／完成事件。审批、中断、失败不猜测，过期清除运行状态并提示降级。
+- 桌面端输出私有会话摘要，汇总器按主机及会话 ID 去重。同轮次优先桌面端实时状态，已知开始时间的新轮次优先；关闭某来源不重启另一来源。身份、路径和原始内容不通过 renderer IPC 广播。
+- 实现及限制见 README 的“OpenAI 桌面端与 Codex CLI 状态”。此前记录的普通聊天、桌面端成品及内存结果属于旧版验证，新增验证需单独记录。

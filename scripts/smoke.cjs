@@ -3,7 +3,7 @@ const fs=require('node:fs');const path=require('node:path');const http=require('
 const { character:getCharacter }=require('../renderer/themes.js');
 const root=path.resolve(__dirname,'..'),directory=path.join(root,'work','ui-smoke');fs.mkdirSync(directory,{recursive:true});
 const reportPath=path.join(directory,'data','smoke-report.json');if(fs.existsSync(reportPath))fs.unlinkSync(reportPath);
-const config=structuredClone(require('../config.example.json'));config.chat.provider='custom';config.chat.saveHistory=false;config.providers.custom.model='mock-model';
+const config=structuredClone(require('../config.example.json'));config.chat.provider='custom';config.chat.saveHistory=false;config.providers.custom.model='mock-model';config.providers.custom.apiKey='local-smoke-test-key';
 if(process.argv.includes('--whale'))config.providers.custom.model='deepseek-mock-model';
 config.providers.custom.reasoning={format:'openai',effort:'high'};
 const server=http.createServer(async(req,res)=>{
@@ -29,3 +29,4 @@ server.listen(0,'127.0.0.1',()=>{
   child.on('error',error=>{console.error(error);clearTimeout(timeout);server.close();process.exitCode=1;});
   child.on('exit',(code,signal)=>{clearTimeout(timeout);server.closeAllConnections();server.close();let passed=false;try{passed=JSON.parse(fs.readFileSync(reportPath,'utf8')).pass===true;}catch{}process.exitCode=code===0&&passed?0:1;console.log('UI smoke exit:',code,'signal:',signal,'report passed:',passed);});
 });
+

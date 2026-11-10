@@ -161,4 +161,4 @@ npm run build:mac
 - [DeepSeek API](https://api-docs.deepseek.com/)
 - [Electron BrowserWindow](https://www.electronjs.org/docs/latest/api/browser-window)、[登录项](https://www.electronjs.org/docs/latest/api/app#appsetloginitemsettingssettings-macos-windows)
 - 龙娘图集来自 [weit0529/gpt-pet](https://github.com/weit0529/gpt-pet)，本项目未修改原图集，署名和许可见 `assets/ATTRIBUTION.md`。
-- 鲸鱼娘 B 版图集来自 [Chih-Kai-Wang/deepseek-girl-codex-pet](https://github.com/Chih-Kai-Wang/deepseek-girl-codex-pet)，保留原图集及上游 MIT 许可，详见 `assets/ATTRIBUTION.md`、`assets/whale/LICENSE.txt`。
+- 鲸鱼娘 B 版图集来自 [Chih-Kai-Wang/deepseek-girl-codex-pet](https://github.com/Chih-Kai-Wang/deepseek-girl-codex-pet)，已清理跨帧的尾巴和头发碎片，保留原有动作、视线方向及上游 MIT 许可；详见 `assets/ATTRIBUTION.md`、`assets/whale/cleanup-report.json`、`assets/whale/LICENSE.txt`。

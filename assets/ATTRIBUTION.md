@@ -12,9 +12,11 @@
 
 - 图集维护源：https://github.com/Chih-Kai-Wang/deepseek-girl-codex-pet
 - 下载入口：https://github.com/Chih-Kai-Wang/dsh-deepseek-girl-pet
-- 文件：`whale/spritesheet.webp`，保留上游原始图集，1536×2288、8×11 格。
+- 文件：`whale/spritesheet.webp`，基于上游图集清理跨帧的尾巴、头发碎片，保留 1536×2288、8×11 格及原有动作和视线方向。
 - 上游 `atlas-source.json` 记录的维护源提交：`2572709632b0e81401b9e92994f2c3786c186397`，路径：`pet/spritesheet.webp`。
-- SHA-256：`234f24a97c18195a00c6093da0090773e675993c169e92e7e13a24c37b323fa2`。
+- 上游原图 SHA-256：`234f24a97c18195a00c6093da0090773e675993c169e92e7e13a24c37b323fa2`。
+- 2026-11-10 修复了挥手、等待回应、检查结果中 5 帧残留的边缘尾巴 / 头发碎片，并清理极淡的孤立残影。未重画角色；所有保留的可见像素、16 个视线方向及中性头像均保持不变。图集以无损 WebP 编码。
+- 当前图集 SHA-256：`3a99033406ca271b1f8ab5270f567fef5c219977266f83bfb2285a79e9de4f50`。逐帧修复记录见 `whale/cleanup-report.json`，复现脚本为 `scripts/repair-whale-atlas.py`，脚本使用修复前图集的固定 SHA-256 校验来源。
 - 上游图集声明采用 MIT License，版权署名为 `Copyright (c) 2026 f0909172434`；许可原文保存在 `whale/LICENSE.txt`。
 - `whale/icon.png`、`whale/tray.png` 由同一图集的中性站姿（第 0 行第 6 列）裁剪、缩放制作。
 - 鲸鱼娘社区原角色署名：上善无形；DeepSeek 女仆二次设计：ZipZipPipe。上游图集许可不改变原角色与商标的权利归属。

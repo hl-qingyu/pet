@@ -1,6 +1,6 @@
 {
   "name": "dragon-desk",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "独立的龙娘桌宠，支持 OpenAI / DeepSeek / 兼容 API",
   "author": "Dragon Desk contributors",
   "license": "MIT",

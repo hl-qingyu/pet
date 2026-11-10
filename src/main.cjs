@@ -6,7 +6,8 @@ const { randomUUID } = require('node:crypto');
 const { ConfigStore, atomicWrite } = require('./config.cjs');
 const { History } = require('./history.cjs');
 const { streamReply, userError } = require('./backends/api.cjs');
-const { resolve: resolveTheme, character: getCharacter } = require('../renderer/themes.js');
+const { resolve: resolveTheme, character: getCharacter, integration: selectedIntegration } = require('../renderer/themes.js');
+const { PetState } = require('./pet-state.cjs');
 
 app.setName('DragonDesk');
 const appRoot = path.resolve(__dirname, '..');
@@ -25,16 +26,47 @@ if (!ownLock) app.quit();
 
 let petWindow, panelWindow, tray, store, history, request, unwatch, currentShortcut = '', cursorTimer;
 let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
-let runtime = { shortcut: '', startup: '', error: '' };
+let runtime = { shortcut: '', startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' } };
 let appliedTheme;
+let dshObserver, openaiObserver, integrationSignature = '', integrationGeneration = 0, integrationStopping = Promise.resolve();
+const petState = new PetState(payload => { currentState = payload.state; broadcast('pet:state', payload); }, () => Boolean(request));
 
 function log(message) {
   fs.appendFileSync(path.join(dataRoot, 'logs', 'app.log'), `${new Date().toISOString()} ${message}\n`);
 }
 function send(window, channel, value) { if (window && !window.isDestroyed() && !window.webContents.isLoading()) window.webContents.send(channel, value); }
 function broadcast(channel, value) { send(petWindow, channel, value); send(panelWindow, channel, value); }
-function status(state, bubble) {
-  currentState = state; broadcast('pet:state', { state, bubble });
+function status(state, bubble, resetMs = 0) { petState.local(state, bubble, resetMs); }
+function applyIntegration() {
+  const selected = selectedIntegration(store.value), options = store.value.integrations[selected];
+  const inactive = selected === 'dsh' ? 'openai' : 'dsh';
+  runtime[inactive] = { count: 0, degraded: false, message: store.value.integrations[inactive].enabled ? `已启用，切换到${inactive === 'dsh' ? '鲸鱼娘' : '龙娘'}后监听` : '未开启' };
+  const signature = JSON.stringify({ selected, options });
+  if (signature === integrationSignature) return;
+  integrationSignature = signature;
+  const generation = ++integrationGeneration;
+  const previous = dshObserver || openaiObserver;
+  if (previous) integrationStopping = previous.stop();
+  dshObserver = openaiObserver = null;
+  petState.external({ state: 'idle' }); petState.enable(options.enabled);
+  runtime[selected] = { count: 0, degraded: false, message: options.enabled ? `等待 ${selected === 'dsh' ? 'DSH 会话' : 'ChatGPT 桌面端连接'}……` : '未开启' };
+  if (!options.enabled) return;
+  integrationStopping.then(() => {
+    if (quitting || generation !== integrationGeneration) return;
+    const Observer = selected === 'dsh' ? require('./backends/dsh-observer.cjs').DshObserver : require('./backends/openai-observer.cjs').OpenaiObserver;
+    const observer = new Observer(options, snapshot => {
+      if (quitting || generation !== integrationGeneration) return;
+      const changed = JSON.stringify(runtime[selected]) !== JSON.stringify(snapshot.info);
+      runtime[selected] = snapshot.info; petState.external(snapshot);
+      if (changed) broadcast('runtime:updated', runtime);
+    });
+    if (selected === 'dsh') dshObserver = observer; else openaiObserver = observer;
+    observer.start();
+  }).catch(() => {
+    if (generation !== integrationGeneration || quitting) return;
+    runtime[selected] = { count: 0, degraded: true, message: '桌面端状态读取失败' };
+    broadcast('runtime:updated', runtime);
+  });
 }
 function petSize() { return { width: Math.round(290 * store.value.pet.scale), height: Math.round(340 * store.value.pet.scale) }; }
 function clampPoint(point, size) {
@@ -54,8 +86,7 @@ function showPanel(page = 'chat') {
 }
 function interaction(kind = 'pet') {
   const lines = getCharacter(store.value).greetings;
-  status(kind === 'jump' ? 'jumping' : 'waving', lines.length ? lines[Math.floor(Math.random() * lines.length)] : '我在呢。');
-  if (!request) setTimeout(() => { if (!request) status('idle'); }, 1700);
+  petState.interact(kind === 'jump' ? 'jumping' : 'waving', lines.length ? lines[Math.floor(Math.random() * lines.length)] : '我在呢。');
 }
 function setShortcut(accelerator) {
   if (accelerator === currentShortcut) return;
@@ -115,6 +146,7 @@ function applyConfig({ startup = false } = {}) {
   }
   panelWindow?.setAlwaysOnTop(false);
   setShortcut(config.shortcuts.togglePet);
+  applyIntegration();
   clearInterval(idleTimer);
   if (config.pet.idleTalkMinutes > 0) idleTimer = setInterval(() => { if (!request && petWindow.isVisible()) interaction(); }, config.pet.idleTalkMinutes * 60000);
   updateTray(); broadcast('config:updated', config); broadcast('runtime:updated', runtime);
@@ -163,7 +195,7 @@ function setupIPC() {
   handle('config:save', next => {
     if (request) throw new Error('请先停止当前回复，再修改接口或性格。');
     const previous = store.value;
-    const { validate } = require('./config.cjs'); validate(next);
+    const { validate, migrate } = require('./config.cjs'); next = migrate(next); validate(next);
     next.pet.position = store.value.pet.position;
     if (next.startup.enabled !== previous.startup.enabled) setStartup(next.startup.enabled);
     try { store.save(next); } catch (error) { if (next.startup.enabled !== previous.startup.enabled) setStartup(previous.startup.enabled); throw error; }
@@ -185,12 +217,11 @@ function setupIPC() {
       const messages = [...history.context(config.chat.historyMessages), { role: 'user', content: text.trim() }];
       const reply = await streamReply({ config, messages, signal: controller.signal, onDelta: delta => broadcast('chat:delta', { id, delta }) });
       history.append(text.trim(), reply, config.chat.saveHistory, character);
-      broadcast('chat:done', { id, text: reply }); status('review', reply.slice(0, 90));
-      setTimeout(() => { if (!request) status('idle'); }, 3200);
+      broadcast('chat:done', { id, text: reply }); status('review', reply.slice(0, 90), 3200);
     } catch (error) {
       const message = userError(error, Object.values(config.providers).map(p => p.apiKey));
-      broadcast('chat:error', { id, message }); status(controller.signal.aborted ? 'idle' : 'failed', message.slice(0, 90));
-    } finally { clearTimeout(timeout); request = null; broadcast('chat:idle', { id }); }
+      broadcast('chat:error', { id, message }); status(controller.signal.aborted ? 'idle' : 'failed', message.slice(0, 90), petState.enabled ? 3200 : 0);
+    } finally { clearTimeout(timeout); request = null; petState.refresh(); broadcast('chat:idle', { id }); }
     return { id };
   });
   handle('chat:stop', () => request?.controller.abort(new Error('已停止生成。')));
@@ -265,6 +296,41 @@ async function smokeTest() {
       while (Date.now() < end) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 40)); }
       throw new Error('UI smoke condition timed out');
     };
+    // Switching the selected model changes only the visible integration form;
+    // both forms keep their independent, unsaved values until Save is pressed.
+    const integrationForms = await panelWindow.webContents.executeJavaScript(`(() => {
+      document.querySelector('.nav[data-page="settings"]').click();
+      const selectModel = value => { const input=document.querySelector('#model');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true})); };
+      const visible = id => getComputedStyle(document.querySelector(id)).display !== 'none';
+      const originalModel=document.querySelector('#model').value;
+      const original={enabled:document.querySelector('#dsh-enabled').checked,bubble:document.querySelector('#dsh-bubble').checked,
+        root:document.querySelector('#dsh-root').value,workspace:document.querySelector('#dsh-workspace').value,
+        openai:document.querySelector('#openai-enabled').checked,openaiBubble:document.querySelector('#openai-bubble').checked,
+        openaiWorkspace:document.querySelector('#openai-workspace').value};
+      selectModel('deepseek-mock-model');
+      const deepseekOnly=visible('#dsh-integration-card')&&!visible('#openai-integration-card');
+      document.querySelector('#dsh-enabled').checked=true;document.querySelector('#dsh-bubble').checked=false;
+      document.querySelector('#dsh-root').value='dsh-draft-root';document.querySelector('#dsh-workspace').value='dsh-draft-workspace';
+      selectModel('gpt-mock-model');
+      const openaiOnly=visible('#openai-integration-card')&&!visible('#dsh-integration-card');
+      document.querySelector('#openai-enabled').checked=false;document.querySelector('#openai-bubble').checked=true;
+      document.querySelector('#openai-workspace').value='openai-draft-workspace';
+      selectModel('deepseek-mock-model');
+      const dshDraft=document.querySelector('#dsh-enabled').checked&&!document.querySelector('#dsh-bubble').checked&&
+        document.querySelector('#dsh-root').value==='dsh-draft-root'&&document.querySelector('#dsh-workspace').value==='dsh-draft-workspace';
+      selectModel('gateway/codex-latest');
+      const openaiDraft=!document.querySelector('#openai-enabled').checked&&document.querySelector('#openai-bubble').checked&&
+        document.querySelector('#openai-workspace').value==='openai-draft-workspace'&&visible('#openai-integration-card')&&!visible('#dsh-integration-card');
+      document.querySelector('#dsh-enabled').checked=original.enabled;document.querySelector('#dsh-bubble').checked=original.bubble;
+      document.querySelector('#dsh-root').value=original.root;document.querySelector('#dsh-workspace').value=original.workspace;
+      document.querySelector('#openai-enabled').checked=original.openai;document.querySelector('#openai-bubble').checked=original.openaiBubble;
+      document.querySelector('#openai-workspace').value=original.openaiWorkspace;
+      selectModel(originalModel);document.querySelector('#save').click();
+      return {deepseekOnly,openaiOnly,dshDraft,openaiDraft};
+    })()`);
+    await waitFor(() => panelWindow.webContents.executeJavaScript(`!document.querySelector('#save').disabled && document.querySelector('#settings-message').textContent.includes('已保存')`));
+    if (!Object.values(integrationForms).every(Boolean)) throw new Error('按模型显示监听配置或独立草稿验证失败');
+    themeChecks.push({integrationFormsByModel:true,independentIntegrationDrafts:true,pass:true});
     const effortSwitch = await panelWindow.webContents.executeJavaScript(`(() => {
       const provider=document.querySelector('#provider');provider.value='deepseek';provider.dispatchEvent(new Event('change'));
       const options=[...document.querySelector('#reasoning-effort').options].map(o=>o.value);
@@ -400,6 +466,107 @@ async function smokeTest() {
     }
     themeChecks.push({independentProfiles:true,unsavedDrafts:true,profileReload:true,interactionBubbles:true,apiPersonalities:true,replyNames:true,pass:true});
     await saveTheme('custom', initialModel, initialModel.startsWith('deepseek') ? 'whale' : 'dragon');
+    // Exercise the actual settings -> observer -> arbitration -> renderer chain.
+    const dshRoot = path.join(dataRoot, 'dsh-sessions');
+    const dshDirectory = path.join(dshRoot, 'workspace', 'session-smoke');
+    fs.mkdirSync(dshDirectory, { recursive: true });
+    const dshFile = path.join(dshDirectory, 'session.v4.jsonl.zstd');
+    fs.writeFileSync(dshFile, Buffer.alloc(0));
+    let dshSeq = 0;
+    const appendDsh = (type, data = {}) => fs.appendFileSync(dshFile, require('node:zlib').zstdCompressSync(Buffer.from(JSON.stringify({ type, seq: ++dshSeq, time: Date.now(), data }) + '\n')));
+    const saveDsh = async (enabled, bubbles = true) => {
+      showPanel('settings');
+      await panelWindow.webContents.executeJavaScript(`(() => {
+        if(getComputedStyle(document.querySelector('#dsh-integration-card')).display==='none')throw new Error('DSH 配置不应在当前模型下隐藏');
+        document.querySelector('#dsh-enabled').checked=${enabled};
+        document.querySelector('#dsh-bubble').checked=${bubbles};
+        document.querySelector('#dsh-root').value=${JSON.stringify(dshRoot)};
+        document.querySelector('#save').click();
+      })()`);
+      await waitFor(() => store.value.integrations.dsh.enabled === enabled && store.value.integrations.dsh.showBubble === bubbles);
+    };
+    if (dshObserver || runtime.dsh.message !== '未开启') throw new Error('DSH 默认关闭验证失败');
+    await saveTheme('custom', 'deepseek-mock-model', 'whale');
+    status('idle'); appendDsh('turn/start', { turn: 1 });
+    await saveDsh(true);
+    await waitFor(() => currentState === 'running' && runtime.dsh.count === 1);
+    appendDsh('approval/asked', { approvalId: 'one' }); appendDsh('approval/asked', { approvalId: 'two' });
+    await waitFor(() => currentState === 'waiting');
+    appendDsh('approval/decided', { approvalId: 'one' });
+    await waitFor(() => [...dshObserver.sessions.values()][0]?.seq >= 4);
+    if (currentState !== 'waiting') throw new Error('并发审批提前解除');
+    showPanel('chat');
+    await panelWindow.webContents.executeJavaScript(`document.querySelector('#message').value='DSH 仲裁测试';document.querySelector('#send').click();`);
+    await waitFor(() => Boolean(request) && currentState === 'running');
+    await waitFor(() => !request && currentState === 'waiting');
+    interaction(); await waitFor(() => currentState === 'waving');
+    await waitFor(() => currentState === 'waiting');
+    await saveDsh(true, false);
+    await waitFor(() => currentState === 'waiting' && dshObserver?.options.showBubble === false);
+    await waitFor(() => petWindow.webContents.executeJavaScript(`!document.querySelector('#bubble').classList.contains('visible')`));
+    appendDsh('approval/decided', { approvalId: 'two' }); await waitFor(() => currentState === 'running');
+    appendDsh('turn/end', { turn: 1, reason: { kind: 'completed' } });
+    await waitFor(() => currentState === 'review'); await waitFor(() => currentState === 'idle');
+    appendDsh('turn/start', { turn: 2 }); appendDsh('turn/end', { turn: 2, reason: { kind: 'error' } });
+    await waitFor(() => currentState === 'failed');
+    showPanel('settings');
+    await panelWindow.webContents.executeJavaScript(`document.querySelector('#dsh-status').scrollIntoView({block:'center'});`);
+    fs.writeFileSync(path.join(dataRoot, 'dsh-settings-smoke.png'), (await panelWindow.webContents.capturePage()).toPNG());
+    await saveDsh(false);
+    await waitFor(() => !dshObserver && runtime.dsh.message === '未开启' && currentState === 'idle');
+    appendDsh('turn/start', { turn: 3 });
+    await new Promise(resolve => setTimeout(resolve, 700));
+    if (currentState !== 'idle' || dshObserver) throw new Error('关闭后仍在跟随 DSH');
+    themeChecks.push({ dshDefaultOff: true, dshSettings: true, concurrentApprovals: true, chatPriority: true,
+      interactionRestored: true, bubbleOff: true, completion: true, failure: true, dshStopped: true, pass: true });
+    await saveTheme('custom', 'gpt-mock-model', 'dragon');
+    const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\dragon-openai-smoke-${process.pid}` : path.join(require('node:os').tmpdir(), `dragon-openai-smoke-${process.pid}.sock`);
+    const openaiFixture = await require('./testing/openai-fixture.cjs').createOpenaiFixture(endpoint, { hostId: 'local', cwd: appRoot });
+    try {
+      store.save({ ...store.value, integrations: { ...store.value.integrations, openai: { ...store.value.integrations.openai, socketPath: endpoint } } }); applyConfig();
+      const saveOpenai = async (enabled, bubble = true, workspace = store.value.integrations.openai.workspace) => {
+        showPanel('settings');
+        await panelWindow.webContents.executeJavaScript(`if(getComputedStyle(document.querySelector('#openai-integration-card')).display==='none')throw new Error('ChatGPT 配置不应在当前模型下隐藏');document.querySelector('#openai-enabled').checked=${enabled};document.querySelector('#openai-bubble').checked=${bubble};document.querySelector('#openai-workspace').value=${JSON.stringify(workspace)};document.querySelector('#save').click();`);
+        await waitFor(() => store.value.integrations.openai.enabled === enabled && store.value.integrations.openai.showBubble === bubble && store.value.integrations.openai.workspace === workspace);
+      };
+      if (openaiObserver || runtime.openai.message !== '未开启') throw new Error('OpenAI 默认关闭验证失败');
+      await saveOpenai(true); await waitFor(() => currentState === 'running' && runtime.openai.count === 1);
+      const dshWorkspace = store.value.integrations.dsh.workspace;
+      await saveOpenai(true, true, appRoot + '-other');
+      await waitFor(() => [...(openaiObserver?.sessions.values() || [])].some(session => session.summary));
+      if (currentState !== 'idle' || runtime.openai.count !== 0 || !runtime.openai.message.includes('匹配工作区')) throw new Error('不匹配工作区的会话不应参与显示');
+      await saveOpenai(true, true, path.dirname(appRoot));
+      await waitFor(() => currentState === 'running' && runtime.openai.count === 1);
+      if (store.value.integrations.dsh.workspace !== dshWorkspace) throw new Error('OpenAI 工作区不应覆盖 DSH 工作区');
+      openaiFixture.update('running', ['one', 'two']); await waitFor(() => currentState === 'waiting');
+      openaiFixture.update('running', ['two']); await waitFor(() => [...openaiObserver.sessions.values()][0]?.revision === 2);
+      if (currentState !== 'waiting') throw new Error('OpenAI 并发输入提前解除');
+      interaction(); await waitFor(() => currentState === 'waving'); await waitFor(() => currentState === 'waiting');
+      await saveOpenai(true, false);
+      await waitFor(() => currentState === 'waiting' && openaiObserver?.options.showBubble === false);
+      await waitFor(() => petWindow.webContents.executeJavaScript(`!document.querySelector('#bubble').classList.contains('visible')`));
+      openaiFixture.update('completed'); await waitFor(() => currentState === 'review'); await waitFor(() => currentState === 'idle');
+      openaiFixture.update('failed'); await waitFor(() => currentState === 'failed');
+      if (dshObserver) throw new Error('龙娘不应监听 DSH');
+      await saveTheme('custom', 'deepseek-mock-model', 'whale');
+      await saveDsh(true, false);
+      await waitFor(() => !openaiObserver && dshObserver && currentState === 'running' && openaiFixture.clients.size === 0);
+      if (!runtime.openai.message.includes('龙娘')) throw new Error('鲸鱼娘不应监听 OpenAI');
+      openaiFixture.update('running', ['ignored']);
+      await saveTheme('custom', 'gpt-mock-model', 'dragon');
+      await waitFor(() => !dshObserver && openaiObserver && currentState === 'waiting');
+      if (JSON.stringify([...openaiObserver.sessions.values()]).includes('PRIVATE_SMOKE_TEXT')) throw new Error('OpenAI 正文不应被保留');
+      showPanel('settings'); await panelWindow.webContents.executeJavaScript(`document.querySelector('#openai-status').scrollIntoView({block:'center'});`);
+      fs.writeFileSync(path.join(dataRoot, 'openai-settings-smoke.png'), (await panelWindow.webContents.capturePage()).toPNG());
+      await saveOpenai(false);
+      await saveTheme('custom', 'deepseek-mock-model', 'whale');
+      await saveDsh(false);
+      await waitFor(() => !dshObserver && !openaiObserver && currentState === 'idle');
+      themeChecks.push({ openaiDefaultOff: true, openaiSettings: true, openaiSyntheticLocalProtocol: true,
+        openaiWorkspaceFilter: true, independentWorkspaces: true, openaiInput: true, openaiCompletion: true,
+        openaiFailure: true, roleBoundSources: true, oneObserver: true, noTranscriptRetained: true, pass: true });
+    } finally { await openaiFixture.close(); }
+    await saveTheme('custom', initialModel, initialModel.startsWith('deepseek') ? 'whale' : 'dragon');
   }
   showPanel('settings');
   await panelWindow.webContents.executeJavaScript('document.querySelector(".settings-body").scrollTop=document.querySelectorAll(".card")[1].offsetTop-120;');
@@ -440,5 +607,5 @@ if (ownLock) app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => { quitting = true; request?.controller.abort(new Error('程序已退出')); });
+app.on('before-quit', () => { quitting = true; ++integrationGeneration; dshObserver?.stop(); openaiObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
 app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

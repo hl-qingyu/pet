@@ -67,3 +67,39 @@ test('saved assistant names survive reload without entering API message metadata
   const reloaded=new History(file);assert.equal(reloaded.messages[1].characterName,'鲸鲸');assert.equal(reloaded.messages[3].characterName,'龙龙');
   assert.deepEqual(Object.keys(reloaded.context(4)[1]).sort(),['content','role']);
 });
+
+test('old v2 and partially specified DSH configs get defaults without losing other settings',t=>{
+  const old=structuredClone(defaults);delete old.integrations;
+  const file=path.join(folder(t),'config.json');fs.writeFileSync(file,JSON.stringify(old));
+  const store=new ConfigStore(file,path.resolve(__dirname,'../config.example.json'));
+  assert.deepEqual(store.value.integrations.dsh,defaults.integrations.dsh);
+  assert.deepEqual(store.value.providers,old.providers);
+  old.integrations={dsh:{enabled:true}};
+  assert.equal(migrate(old).integrations.dsh.enabled,true);
+  assert.equal(migrate(old).integrations.dsh.pollMs,500);
+  assert.deepEqual(old.integrations,{dsh:{enabled:true}});
+});
+test('DSH config rejects wrong types, fractions and out of bounds settings',()=>{
+  for(const [key,value] of [['enabled',1],['showBubble','false'],['pollMs',199],['pollMs',500.5],['activeSeconds',3601],['sessionsRoot',null],['workspace','x'.repeat(1001)]]) {
+    const config=structuredClone(defaults);config.integrations.dsh[key]=value;
+    assert.throws(()=>validate(migrate(config)),/dsh\./);
+  }
+  const config=structuredClone(defaults);config.integrations=null;assert.throws(()=>validate(migrate(config)),/integrations/);
+});
+test('existing DSH settings gain OpenAI defaults without losing their enabled state',()=>{
+  const old=structuredClone(defaults);delete old.integrations.openai;old.integrations.dsh.enabled=true;
+  const next=migrate(old);assert.deepEqual(next.integrations.openai,defaults.integrations.openai);assert.equal(next.integrations.dsh.enabled,true);
+  assert.equal(old.integrations.openai,undefined);
+  for(const [key,value] of [['enabled',1],['showBubble','false'],['socketPath',null],['activeSeconds',10.5]]) {
+    const config=structuredClone(defaults);config.integrations.openai[key]=value;assert.throws(()=>validate(migrate(config)),/openai\./);
+  }
+});
+test('OpenAI workspace defaults preserve old enabled settings and reject invalid paths',()=>{
+  const old=structuredClone(defaults);old.integrations.openai.enabled=true;delete old.integrations.openai.workspace;
+  const next=migrate(old);assert.equal(next.integrations.openai.workspace,'');assert.equal(next.integrations.openai.enabled,true);
+  assert.equal(old.integrations.openai.workspace,undefined);
+  for(const workspace of [null,123,'x'.repeat(1001)]) {
+    const config=structuredClone(defaults);config.integrations.openai.workspace=workspace;
+    assert.throws(()=>validate(migrate(config)),/openai.workspace/);
+  }
+});

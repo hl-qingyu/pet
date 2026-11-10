@@ -11,6 +11,8 @@
     "check": "node scripts/check.cjs",
     "test": "node --test test/*.test.cjs",
     "test:ui": "node scripts/smoke.cjs",
+    "test:dsh-memory": "node --expose-gc scripts/dsh-memory.cjs",
+    "test:openai-memory": "node --expose-gc scripts/openai-memory.cjs",
     "test:packaged": "node scripts/smoke.cjs --packaged",
     "build:win": "electron-builder --win dir --x64",
     "build:mac": "electron-builder --mac zip --arm64 --x64"

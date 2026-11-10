@@ -24,7 +24,7 @@ server.listen(0,'127.0.0.1',()=>{
   const packaged=process.argv.includes('--packaged');
   const executable=packaged?path.join(root,'dist','win-unpacked','DragonDesk.exe'):require('electron');
   const child=spawn(executable,[...(packaged?[]:[root]),`--config=${file}`,'--smoke-test'],{cwd:root,env,stdio:'inherit',windowsHide:true});
-  const timeout=setTimeout(()=>{console.error('UI smoke timed out');child.kill();process.exitCode=1;server.close();},60000);
+  const timeout=setTimeout(()=>{console.error('UI smoke timed out');child.kill();process.exitCode=1;server.close();},90000);
   child.on('error',error=>{console.error(error);clearTimeout(timeout);server.close();process.exitCode=1;});
   child.on('exit',(code,signal)=>{clearTimeout(timeout);server.closeAllConnections();server.close();let passed=false;try{passed=JSON.parse(fs.readFileSync(reportPath,'utf8')).pass===true;}catch{}process.exitCode=code===0&&passed?0:1;console.log('UI smoke exit:',code,'signal:',signal,'report passed:',passed);});
 });

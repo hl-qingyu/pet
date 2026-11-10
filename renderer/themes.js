@@ -15,7 +15,8 @@
     return /^deepseek(?:[-_]|$)/i.test(id) || /(^|\.)deepseek\.com$/i.test(host) ? themes.whale : themes.dragon;
   }
   function character(config) { return config.characters[resolve(config).id]; }
-  const api = { resolve, character, themes };
+  function integration(config) { return resolve(config).id === 'whale' ? 'dsh' : 'openai'; }
+  const api = { resolve, character, themes, integration };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.petThemes = api;
 })(globalThis);

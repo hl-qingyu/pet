@@ -37,7 +37,7 @@ function message(role, text, pending = false, characterName = '伙伴') {
 }
 function scrollChat() { const area = $('#messages'); area.scrollTop = area.scrollHeight; }
 function setBusy(value) { busy = value; $('#send').classList.toggle('hidden',value); $('#stop').classList.toggle('hidden',!value); $('#save').disabled = value; $('#clear-chat').disabled = value; $('#chat-status').textContent = value ? '正在想，慢慢说给你听……' : `${activeConfig.providers[activeConfig.chat.provider].label} · 准备好了`; }
-function runtime(value) { $('#shortcut-status').textContent = value.shortcut || ''; $('#startup-status').textContent = value.startup || ''; if (value.error) notice(value.error,true); }
+function runtime(value) { $('#shortcut-status').textContent = value.shortcut || ''; $('#startup-status').textContent = value.startup || ''; $('#dsh-status').textContent = value.dsh?.message || '未开启'; $('#openai-status').textContent = value.openai?.message || '未开启'; if (value.error) notice(value.error,true); }
 function effortOptions(value = 'default') {
   const deepseek = $('#reasoning-format').value === 'deepseek';
   const all = [['default','模型默认'],['none','关闭推理（none）'],['minimal','极低（minimal）'],['low','低（low）'],['medium','中（medium）'],['high','高（high）'],['xhigh','极高（xhigh）'],['max','最大（max）']];
@@ -56,6 +56,9 @@ function previewTheme() {
   const id = selectedProvider;
   const preview = { chat: { provider: id }, providers: { [id]: { model: $('#model').value, baseUrl: $('#base-url').value } } };
   const theme = window.petThemes.resolve(preview);
+  const integration = window.petThemes.integration(preview);
+  $('#dsh-integration-card').classList.toggle('hidden', integration !== 'dsh');
+  $('#openai-integration-card').classList.toggle('hidden', integration !== 'openai');
   if (editingCharacter !== theme.id) {
     retainCharacter(); editingCharacter = theme.id;
     const character = config.characters[editingCharacter];
@@ -89,6 +92,11 @@ function fill(value) {
   $('#autostart').checked = config.startup.enabled; $('#always-top').checked = config.pet.alwaysOnTop; $('#follow').checked = config.pet.followMouse;
   $('#show-on-launch').checked = config.pet.showOnLaunch; $('#save-history').checked = config.chat.saveHistory; $('#scale').value = config.pet.scale;
   $('#scale-label').textContent = `${Math.round(config.pet.scale*100)}%`; $('#idle-minutes').value = config.pet.idleTalkMinutes; $('#shortcut').value = config.shortcuts.togglePet;
+  const dsh = config.integrations.dsh;
+  $('#dsh-enabled').checked = dsh.enabled; $('#dsh-bubble').checked = dsh.showBubble;
+  $('#dsh-root').value = dsh.sessionsRoot; $('#dsh-workspace').value = dsh.workspace;
+  $('#openai-enabled').checked = config.integrations.openai.enabled; $('#openai-bubble').checked = config.integrations.openai.showBubble;
+  $('#openai-workspace').value = config.integrations.openai.workspace;
   setBusy(busy);
 }
 function readForm() {
@@ -97,7 +105,12 @@ function readForm() {
   next.chat.provider = $('#provider').value; next.chat.maxOutputTokens = Number($('#max-tokens').value); next.chat.timeoutSeconds = Number($('#timeout').value);
   next.startup.enabled = $('#autostart').checked; next.pet.alwaysOnTop = $('#always-top').checked; next.pet.followMouse = $('#follow').checked;
   next.pet.showOnLaunch = $('#show-on-launch').checked; next.chat.saveHistory = $('#save-history').checked; next.pet.scale = Number($('#scale').value);
-  next.pet.idleTalkMinutes = Number($('#idle-minutes').value); next.shortcuts.togglePet = $('#shortcut').value.trim(); return next;
+  next.pet.idleTalkMinutes = Number($('#idle-minutes').value); next.shortcuts.togglePet = $('#shortcut').value.trim();
+  Object.assign(next.integrations.dsh, { enabled: $('#dsh-enabled').checked, showBubble: $('#dsh-bubble').checked,
+    sessionsRoot: $('#dsh-root').value.trim(), workspace: $('#dsh-workspace').value.trim() });
+  Object.assign(next.integrations.openai, { enabled: $('#openai-enabled').checked, showBubble: $('#openai-bubble').checked,
+    workspace: $('#openai-workspace').value.trim() });
+  return next;
 }
 async function save() {
   try { $('#save').disabled = true; const result = await window.dragon.invoke('config:save',readForm()); fill(result.config); runtime(result.runtime); notice('已保存，设置已经生效。'); }

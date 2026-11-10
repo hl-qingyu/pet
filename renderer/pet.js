@@ -54,7 +54,11 @@ document.addEventListener('contextmenu', e => { e.preventDefault(); window.drago
 document.querySelector('#chat').onclick = () => window.dragon.send('panel:open','chat');
 document.querySelector('#settings').onclick = () => window.dragon.send('panel:open','settings');
 document.querySelector('#hide').onclick = () => window.dragon.send('pet:hide');
-window.dragon.on('pet:state', payload => { state = payload.state; choose(state); say(payload.bubble); });
+window.dragon.on('pet:state', payload => {
+  state = payload.state; choose(state);
+  if (payload.clearBubble) { clearTimeout(bubbleTimer); bubble.classList.remove('visible'); }
+  say(payload.bubble);
+});
 window.dragon.on('pet:drag-direction', name => { if (drag) choose(name); });
 window.dragon.on('pet:cursor', point => { const s = config?.pet.scale || 1, dx = point.x/s-145, dy = point.y/s-210; direction = Math.round(((Math.atan2(dx,-dy)*180/Math.PI+360)%360)/22.5)%16; });
 window.dragon.on('config:updated', configure);

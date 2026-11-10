@@ -44,6 +44,20 @@
         <label>显示 / 隐藏快捷键<input id="shortcut" spellcheck="false" placeholder="CommandOrControl+Alt+Shift+D"></label>
         <p class="hint" id="shortcut-status"></p><p class="hint" id="startup-status"></p>
       </article>
+      <article class="card hidden" id="dsh-integration-card"><div class="card-heading"><span>04</span><h3>DSH 桌面端</h3></div>
+        <div class="toggles"><label class="toggle"><span>显示 DSH 执行状态<small>跟随这台电脑上的 DeepSeek Harness</small></span><input id="dsh-enabled" type="checkbox"></label><label class="toggle"><span>状态气泡<small>只显示通用提示</small></span><input id="dsh-bubble" type="checkbox"></label></div>
+        <label>会话根目录（可选）<input id="dsh-root" maxlength="1000" placeholder="留空使用 DSH 默认目录"></label>
+        <label>只监听指定工作区（可选）<input id="dsh-workspace" maxlength="1000" placeholder="留空监听所有工作区"></label>
+        <p class="hint">DeepSeek 模型使用独立的 DSH 监听配置，保存后生效。只读本机日志，不保存或展示对话内容；新会话可能需要约 5 秒发现。</p>
+        <p class="hint" id="dsh-status" role="status">未开启</p>
+      </article>
+      <article class="card hidden" id="openai-integration-card"><div class="card-heading"><span>04</span><h3>ChatGPT 桌面端</h3></div>
+        <div class="toggles"><label class="toggle"><span>显示 OpenAI 执行状态<small>跟随桌面端的聊天和 Codex / Work 任务</small></span><input id="openai-enabled" type="checkbox"></label><label class="toggle"><span>状态气泡<small>只显示通用提示</small></span><input id="openai-bubble" type="checkbox"></label></div>
+        <label>只监听指定工作区（可选）<input id="openai-workspace" maxlength="1000" placeholder="填写本地项目目录，留空监听全部会话"></label>
+        <p class="hint">填写后只监听本机该目录及其子目录的会话；没有本地目录信息的普通聊天会被排除。</p>
+        <p class="hint">OpenAI / GPT / Codex 模型使用独立的 ChatGPT 监听配置，保存后生效。不保存或展示对话内容，本机桌面端需要保持运行。</p>
+        <p class="hint" id="openai-status" role="status">未开启</p>
+      </article>
       <div class="config-footer"><div><strong>所有设置，一个配置文件。</strong><code id="config-path"></code></div><button id="open-config" class="subtle">打开配置文件 ↗</button></div>
     </div>
   </section>

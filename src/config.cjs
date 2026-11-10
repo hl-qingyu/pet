@@ -13,16 +13,31 @@ function validateCharacter(character, label) {
   character.greetings.forEach(value => text(value, `${label}互动台词`, 500));
 }
 function migrate(config) {
-  if (!object(config) || config.version !== 1) return config;
-  check(object(config.pet) && object(config.personality), '旧版角色配置不完整');
-  const legacy = { name: config.pet.name, systemPrompt: config.personality.systemPrompt, greetings: config.pet.greetings };
-  validateCharacter(legacy, '旧版');
+  if (!object(config)) return config;
+  if (config.version === 1) {
+    check(object(config.pet) && object(config.personality), '旧版角色配置不完整');
+    const legacy = { name: config.pet.name, systemPrompt: config.personality.systemPrompt, greetings: config.pet.greetings };
+    validateCharacter(legacy, '旧版');
+    const next = structuredClone(config);
+    next.version = 2;
+    next.characters = structuredClone(require('../config.example.json').characters);
+    // The original app had one dragon character; keep all its custom text intact.
+    next.characters.dragon = structuredClone(legacy);
+    delete next.pet.name; delete next.pet.greetings; delete next.personality;
+    config = next;
+  }
+  if (config.version !== 2) return config;
+  const defaults = require('../config.example.json').integrations;
+  if (object(config.integrations) && Object.entries(defaults).every(([id, values]) => object(config.integrations[id]) &&
+    Object.keys(values).every(key => config.integrations[id][key] !== undefined))) return config;
   const next = structuredClone(config);
-  next.version = 2;
-  next.characters = structuredClone(require('../config.example.json').characters);
-  // The original app had one dragon character; keep all its custom text intact.
-  next.characters.dragon = structuredClone(legacy);
-  delete next.pet.name; delete next.pet.greetings; delete next.personality;
+  if (next.integrations === undefined) next.integrations = {};
+  if (object(next.integrations)) {
+    for (const [id, values] of Object.entries(defaults)) {
+      if (next.integrations[id] === undefined) next.integrations[id] = {};
+      if (object(next.integrations[id])) for (const [key, value] of Object.entries(values)) if (next.integrations[id][key] === undefined) next.integrations[id][key] = value;
+    }
+  }
   return next;
 }
 function validate(config) {
@@ -60,6 +75,24 @@ function validate(config) {
   check(Object.hasOwn(config.providers, config.chat.provider), 'chat.provider 必须对应一个接口 ID');
   check(typeof config.startup.enabled === 'boolean', 'startup.enabled 必须是布尔值');
   text(config.shortcuts.togglePet, '显示隐藏快捷键', 100);
+  if (config.integrations !== undefined) {
+    check(object(config.integrations) && object(config.integrations.dsh), 'integrations.dsh 必须是对象');
+    const dsh = config.integrations.dsh;
+    for (const key of ['enabled', 'showBubble']) check(typeof dsh[key] === 'boolean', `dsh.${key} 必须是布尔值`);
+    for (const key of ['sessionsRoot', 'workspace']) text(dsh[key], `dsh.${key}`, 1000);
+    for (const [key, min, max] of [['pollMs', 200, 5000], ['activeSeconds', 10, 3600]]) {
+      range(dsh[key], min, max, `dsh.${key}`); check(Number.isInteger(dsh[key]), `dsh.${key} 必须是整数`);
+    }
+    if (config.integrations.openai !== undefined) {
+      const openai = config.integrations.openai;
+      check(object(openai), 'integrations.openai 必须是对象');
+      for (const key of ['enabled', 'showBubble']) check(typeof openai[key] === 'boolean', `openai.${key} 必须是布尔值`);
+      text(openai.socketPath, 'openai.socketPath', 1000);
+      text(openai.workspace, 'openai.workspace', 1000);
+      range(openai.activeSeconds, 10, 3600, 'openai.activeSeconds');
+      check(Number.isInteger(openai.activeSeconds), 'openai.activeSeconds 必须是整数');
+    }
+  }
   return config;
 }
 

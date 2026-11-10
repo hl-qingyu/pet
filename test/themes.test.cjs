@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { resolve } = require('../renderer/themes.js');
+const { resolve, integration } = require('../renderer/themes.js');
 const defaults = require('../config.example.json');
 
 test('theme follows the selected model even through a different API provider', () => {
@@ -30,4 +30,10 @@ test('unknown model aliases fall back to the active provider or its endpoint', (
   assert.equal(resolve(config).id, 'dragon');
   config.providers.custom.baseUrl = 'https://';
   assert.doesNotThrow(() => resolve(config));
+});
+test('dragon binds only OpenAI and whale only DSH regardless of provider aliases', () => {
+  const config=structuredClone(defaults);config.chat.provider='custom';
+  for(const [model,expected] of [['gpt-mock','openai'],['codex-latest','openai'],['deepseek-mock','dsh']]) {
+    config.providers.custom.model=model;assert.equal(integration(config),expected);
+  }
 });

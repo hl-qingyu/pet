@@ -56,6 +56,10 @@
       "extraBody": {}
     }
   },
+  "integrations": {
+    "dsh": { "enabled": false, "sessionsRoot": "", "workspace": "", "showBubble": true, "pollMs": 500, "activeSeconds": 600 },
+    "openai": { "enabled": false, "showBubble": true, "socketPath": "", "workspace": "", "activeSeconds": 600 }
+  },
   "startup": { "enabled": false },
   "shortcuts": { "togglePet": "CommandOrControl+Alt+Shift+D" }
 }

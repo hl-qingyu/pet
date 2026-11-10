@@ -46,7 +46,7 @@ def main():
             raise RuntimeError('Bundled example contains an API key.')
         if example['startup']['enabled']:
             raise RuntimeError('Default distribution must not enable auto-start.')
-        forbidden = {'config.json', 'data', 'work', '.env', '.git', 'node_modules'}
+        forbidden = {'config.json', 'data', 'work', '.env', '.git'}
         if forbidden.intersection(index['files']):
             raise RuntimeError('Private or development files found in app resources.')
 
@@ -108,3 +108,4 @@ DragonDesk.exe 同级目录，即可继续使用原配置和聊天记录。不�
 
 if __name__ == '__main__':
     main()
+

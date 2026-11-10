@@ -138,6 +138,14 @@ Windows 打包：
 npm run build:win
 ```
 
+正式分发时，先提交版本变更，再用 Python 3.11+ 整理分发目录和 ZIP：
+
+```sh
+python scripts/package-release.py
+```
+
+输出 `dist/DragonDesk-版本-windows-x64.zip` 及 SHA-256 校验文件。压缩包内使用 `DragonDesk/` 目录，自动附带使用说明、空白配置示例、版本信息和“许可与来源”，不打包个人配置或聊天数据。若程序正在运行，可将构建输出指向其他目录，再通过 `--app-dir` 指定该目录中的 `win-unpacked`。脚本会检查源码提交状态、程序资源版本、配置示例和压缩包完整性；不会覆盖已有分发包。
+
 macOS 打包（在 Mac 上执行）：
 
 ```sh

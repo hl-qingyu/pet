@@ -22,7 +22,8 @@ server.listen(0,'127.0.0.1',()=>{
   const file=path.join(directory,'config.json');fs.writeFileSync(file,JSON.stringify(config,null,2));
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
   const packaged=process.argv.includes('--packaged');
-  const executable=packaged?path.join(root,'dist','win-unpacked','DragonDesk.exe'):require('electron');
+  const appDirectory=process.argv.find(arg=>arg.startsWith('--app-dir='))?.slice(10);
+  const executable=packaged?path.join(appDirectory?path.resolve(appDirectory):path.join(root,'dist','win-unpacked'),'DragonDesk.exe'):require('electron');
   const child=spawn(executable,[...(packaged?[]:[root]),`--config=${file}`,'--smoke-test'],{cwd:root,env,stdio:'inherit',windowsHide:true});
   const timeout=setTimeout(()=>{console.error('UI smoke timed out');child.kill();process.exitCode=1;server.close();},90000);
   child.on('error',error=>{console.error(error);clearTimeout(timeout);server.close();process.exitCode=1;});

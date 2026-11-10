@@ -1,6 +1,6 @@
 {
   "source_sha256": "877cc8f424671394dab13d35fa18072f48b0905194ca3d5fb5b37b7807b080fa",
-  "output_sha256": "3a99033406ca271b1f8ab5270f567fef5c219977266f83bfb2285a79e9de4f50",
+  "output_sha256": "47b6d236127a974919db5a7b895b8e00380f5bfb65890b980db6f66cd90227d7",
   "size": [
     1536,
     2288
@@ -205,5 +205,20 @@
   "removed_faint_residue_pixels": 902,
   "added_pixels": 0,
   "changed_retained_pixels": 0,
-  "changed_visible_look_pixels": 0
+  "changed_visible_look_pixels": 0,
+  "previous_output_sha256": "3a99033406ca271b1f8ab5270f567fef5c219977266f83bfb2285a79e9de4f50",
+  "residual_stage": {
+    "script": "scripts/repair-whale-residue.py",
+    "parent_sha256": "3a99033406ca271b1f8ab5270f567fef5c219977266f83bfb2285a79e9de4f50",
+    "row": 6,
+    "column": 4,
+    "mask": [
+      20,
+      120,
+      33,
+      166
+    ],
+    "removed_pixels": 353,
+    "look_frames_changed": 0
+  }
 }

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, globalShortcut, screen, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, globalShortcut, screen, shell, dialog, powerMonitor } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -108,7 +108,13 @@ function clampPoint(point, size) {
   const a = display.workArea;
   return { x: Math.round(Math.min(Math.max(point?.x ?? a.x + a.width - size.width - 28, a.x), a.x + a.width - size.width)), y: Math.round(Math.min(Math.max(point?.y ?? a.y + a.height - size.height - 20, a.y), a.y + a.height - size.height)) };
 }
-function showPet() { petWindow.showInactive(); }
+function restorePetLevel() {
+  if (!petWindow || petWindow.isDestroyed() || !store) return;
+  const enabled = store.value.pet.alwaysOnTop;
+  petWindow.setAlwaysOnTop(enabled, 'floating');
+  if (enabled && petWindow.isVisible()) petWindow.moveTop();
+}
+function showPet() { petWindow.showInactive(); restorePetLevel(); }
 function hidePet() { petWindow.hide(); panelWindow?.hide(); }
 function togglePet() { petWindow.isVisible() ? hidePet() : showPet(); }
 function showPanel(page = 'chat') {
@@ -205,7 +211,7 @@ function applyConfig({ startup = false } = {}) {
     const size = petSize();
     const point = clampPoint(config.pet.position || petWindow.getBounds(), size);
     petWindow.setBounds({ ...size, ...point });
-    petWindow.setAlwaysOnTop(config.pet.alwaysOnTop, 'floating');
+    restorePetLevel();
   }
   panelWindow?.setAlwaysOnTop(false);
   setShortcut(config.shortcuts.togglePet);
@@ -331,7 +337,7 @@ function setupIPC() {
     const point = clampPoint({ x: dragOrigin.bounds.x + cursor.x - dragOrigin.cursor.x, y: dragOrigin.bounds.y + cursor.y - dragOrigin.cursor.y }, petSize());
     petWindow.setPosition(point.x, point.y);
   });
-  on('pet:drag-end', () => { dragOrigin = null; persistPosition(); });
+  on('pet:drag-end', () => { dragOrigin = null; persistPosition(); restorePetLevel(); });
 }
 
 function secureWindow(window) {
@@ -360,6 +366,7 @@ function createWindows() {
   for (const event of ['render-process-gone', 'did-start-loading']) panelWindow.webContents.on(event, () => setShortcutRecording(false));
   petWindow.on('close', event => { if (!quitting) { event.preventDefault(); hidePet(); } });
   petWindow.on('move', persistPosition);
+  for (const event of ['show', 'restore', 'blur']) petWindow.on(event, restorePetLevel);
   petWindow.once('ready-to-show', () => { if (store.value.pet.showOnLaunch) showPet(); status('idle', getCharacter(store.value).greetings[0]); });
   panelWindow.once('ready-to-show', () => { if (process.argv.includes('--settings')) showPanel('settings'); });
   petWindow.loadFile(path.join(appRoot, 'renderer/pet.html'));
@@ -707,6 +714,8 @@ if (ownLock) app.whenReady().then(async () => {
     unwatch = store.watch(() => applyConfig({ startup: true }), error => { runtime.error = error.message; broadcast('runtime:updated', runtime); });
     app.on('second-instance', () => { showPet(); showPanel('chat'); });
     app.on('activate', () => showPet());
+    powerMonitor.on('resume', restorePetLevel);
+    powerMonitor.on('unlock-screen', restorePetLevel);
     screen.on('display-removed', () => { const p = clampPoint(petWindow.getBounds(), petSize()); petWindow.setPosition(p.x, p.y); });
     log('DragonDesk started. API-only runtime.');
     if (smoke) {

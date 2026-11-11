@@ -3,6 +3,13 @@ name: 打包 Mac 桌宠
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: mac-release
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-latest
@@ -31,3 +38,17 @@ jobs:
           name: DragonDesk-mac
           path: dist/*.zip
           if-no-files-found: error
+
+      - name: 发布到 GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          tag="DragonDesk-${version}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes "Mac 安装包：Apple M 系列芯片请选择 arm64，Intel 芯片请选择 x64。当前版本未签名。"
+          fi
+          gh release upload "$tag" dist/*.zip --clobber

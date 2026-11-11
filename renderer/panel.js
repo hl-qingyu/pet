@@ -233,4 +233,12 @@ window.dragon.on('chat:delta', payload => { if (payload.id !== pendingId) return
 window.dragon.on('chat:done', payload => { if (payload.id !== pendingId) return; pendingNode.classList.remove('pending'); pendingNode.querySelector('.message-content').textContent = payload.text; scrollChat(); });
 window.dragon.on('chat:error', payload => { if (payload.id !== pendingId) return; pendingNode.classList.remove('pending'); pendingNode.classList.add('failed'); pendingNode.querySelector('.message-content').textContent = partial || '这次还没能回复。'; chatError(payload.message); });
 window.dragon.on('chat:idle', () => setBusy(false));
-window.dragon.invoke('bootstrap').then(data => { shortcutPlatform = data.platform || 'win32'; fill(data.config); runtime(data.runtime); $('#config-path').textContent = data.configPath; renderHistory(data.messages); setBusy(data.busy); page(data.page); }).catch(error => { window.__bootError = error.message; chatError(error.message); });
+window.dragon.invoke('bootstrap').then(data => { shortcutPlatform = data.platform || 'win32'; fill(data.config); runtime(data.runtime); $('#config-path').textContent = data.configPath; renderHistory(data.messages); setBusy(data.busy); page(data.page); window.dragon.send('panel:ready'); }).catch(error => { window.__bootError = error.message; chatError(error.message); });
+
+window.dragon.on('panel:repaint', () => {
+  requestAnimationFrame(() => {
+    // Recreate the compositor layer after restoring a hidden native window.
+    document.body.style.transform = 'translateZ(0)';
+    requestAnimationFrame(() => { document.body.style.transform = ''; });
+  });
+});

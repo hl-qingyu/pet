@@ -26,6 +26,7 @@ const ownLock = app.requestSingleInstanceLock();
 if (!ownLock) app.quit();
 
 let petWindow, panelWindow, tray, store, history, request, unwatch, currentShortcut = '', cursorTimer;
+let panelReady = false, panelPending = false, panelCrashed = false;
 let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
 let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' }, codexCli: { count: 0, degraded: false, message: '未开启' } };
 let appliedTheme;
@@ -112,10 +113,18 @@ function hidePet() { petWindow.hide(); panelWindow?.hide(); }
 function togglePet() { petWindow.isVisible() ? hidePet() : showPet(); }
 function showPanel(page = 'chat') {
   panelPage = page;
+  if (!panelReady) {
+    panelPending = true;
+    if (panelCrashed) { panelCrashed = false; panelWindow.reload(); }
+    return;
+  }
   const a = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   const bounds = panelWindow.getBounds();
   if (!screen.getAllDisplays().some(d => bounds.x >= d.workArea.x && bounds.x < d.workArea.x + d.workArea.width)) panelWindow.setPosition(a.x + 30, a.y + 30);
-  panelWindow.show(); panelWindow.focus(); send(panelWindow, 'panel:page', page);
+  send(panelWindow, 'panel:page', page);
+  if (panelWindow.isMinimized()) panelWindow.restore();
+  panelWindow.show(); panelWindow.focus();
+  send(panelWindow, 'panel:repaint');
 }
 function interaction(kind = 'pet') {
   const lines = getCharacter(store.value).greetings;
@@ -298,6 +307,11 @@ function setupIPC() {
   });
   handle('chat:stop', () => request?.controller.abort(new Error('已停止生成。')));
   on('panel:open', page => showPanel(page === 'settings' ? 'settings' : 'chat'));
+  on('panel:ready', () => {
+    panelReady = true;
+    send(panelWindow, 'panel:page', panelPage);
+    if (panelPending) { panelPending = false; showPanel(panelPage); }
+  });
   on('panel:hide', () => panelWindow.hide());
   on('pet:interact', kind => interaction(kind));
   on('pet:menu', () => contextMenu().popup({ window: petWindow }));
@@ -332,9 +346,15 @@ function createWindows() {
   const size = petSize(); const point = clampPoint(store.value.pet.position, size);
   const webPreferences = { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false };
   petWindow = new BrowserWindow({ ...size, ...point, title: 'DragonDesk · 桌宠', frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, maximizable: false, minimizable: false, hasShadow: false, skipTaskbar: true, show: false, webPreferences });
-  panelWindow = new BrowserWindow({ width: 940, height: 740, minWidth: 760, minHeight: 580, title: 'DragonDesk · 聊天与设置', backgroundColor: '#f8f7fc', show: false, autoHideMenuBar: true, icon: path.join(appRoot, 'assets/icon.png'), webPreferences });
+  panelWindow = new BrowserWindow({ width: 940, height: 740, minWidth: 760, minHeight: 580, title: 'DragonDesk · 聊天与设置', backgroundColor: '#f8f7fc', show: false, autoHideMenuBar: true, icon: path.join(appRoot, 'assets/icon.png'), webPreferences: { ...webPreferences, backgroundThrottling: false } });
   for (const window of [petWindow, panelWindow]) secureWindow(window);
   if (process.platform === 'darwin') petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  panelWindow.webContents.on('did-start-loading', () => { panelReady = false; });
+  panelWindow.webContents.on('render-process-gone', () => {
+    panelReady = false; panelCrashed = true;
+    panelPending = panelWindow.isVisible(); panelWindow.hide();
+    if (panelPending && !quitting) { panelCrashed = false; panelWindow.reload(); }
+  });
   panelWindow.on('close', event => { if (!quitting) { event.preventDefault(); panelWindow.hide(); } });
   for (const event of ['blur', 'hide']) panelWindow.on(event, () => setShortcutRecording(false));
   for (const event of ['render-process-gone', 'did-start-loading']) panelWindow.webContents.on(event, () => setShortcutRecording(false));

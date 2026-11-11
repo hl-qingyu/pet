@@ -1,5 +1,14 @@
 # 项目协作约定
 
+## 版本号与 GitHub Releases 发布
+
+- 发布新版前必须更新 `package.json` 的 `version`，并同步更新 `package-lock.json`；可执行 `npm version <新版本号> --no-git-tag-version`，再提交并推送版本文件及本次改动。
+- Mac 打包使用 `.github/workflows/build-mac.yml`，推送代码后在 GitHub Actions 中通过 `Run workflow` 选择对应分支运行。
+- 工作流按构建代码中 `package.json` 的版本号，将产物发布到 `DragonDesk-<版本号>` 对应的 GitHub Release；不存在时创建，存在时更新附件。
+- 分别上传 arm64 和 x64 的 ZIP，供 Apple M 系列和 Intel Mac 用户单独下载；同时保留 Actions 构建产物。
+- 同一版本重复打包会覆盖 Release 中的同名 ZIP；正式发布新版必须先升级版本号，避免覆盖旧版产物。
+- 发布使用工作流内置的 `github.token` 及 `contents: write` 权限，无需配置个人访问令牌；electron-builder 保持 `--publish never`，由工作流的 Release 步骤统一上传。
+
 ## Git 提交
 
 - 所有 Git commit 的标题和正文均使用中文描述更新内容。

@@ -8,9 +8,13 @@ async function createOpenaiFixture(endpoint, { hostId = 'chatgpt', cwd = '' } = 
   const clients = new Set(); let revision = 0, startedAt = Date.now();
   const state = { cwd, threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [],
     turns: [{ turnId: 'smoke-turn', status: 'inProgress', turnStartedAtMs: startedAt, durationMs: null, items: [{ content: 'PRIVATE_SMOKE_TEXT' }] }] };
+  const entityKey = 'tail:0:local:smoke-turn';
+  const conversationState = () => ({ ...state, turns: [], turnHistory: { kind: 'canonical', history: {
+    generation: 0, entitiesByKey: { [entityKey]: state.turns[0] }, islands: [{ id: 'tail:0', entries: [{ key: entityKey, value: entityKey }] }],
+  } } });
   const send = (socket, value) => { if (socket.writable) socket.write(frame(value)); };
   const snapshot = socket => send(socket, { type: 'broadcast', sourceClientId: 'smoke-owner', method: 'thread-stream-state-changed', version: 11,
-    params: { hostId, conversationId: 'smoke-chat', change: { type: 'snapshot', revision, conversationState: state } } });
+    params: { hostId, conversationId: 'smoke-chat', change: { type: 'snapshot', revision, conversationState: conversationState() } } });
   const server = net.createServer(socket => {
     clients.add(socket); let rest = Buffer.alloc(0);
     socket.on('close', () => clients.delete(socket)); socket.on('error', () => {});
@@ -28,13 +32,19 @@ async function createOpenaiFixture(endpoint, { hostId = 'chatgpt', cwd = '' } = 
     });
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve); });
-  return { clients, state, update(type, pending = []) {
+  return { clients, state, update(type, pending = [], items = [{ content: 'PRIVATE_SMOKE_TEXT' }]) {
     revision++; state.threadRuntimeStatus = { type: type === 'failed' ? 'systemError' : type === 'completed' ? 'idle' : 'active', activeFlags: [] };
-    state.requests = pending.map(id => ({ id, method: 'item/tool/requestUserInput' }));
+    state.requests = pending.map(value => typeof value === 'string' ? { id: value, method: 'item/tool/requestUserInput' } : value);
+    state.turns[0].items = items;
     if (type === 'running' && state.turns[0].status !== 'inProgress') startedAt = Date.now();
     Object.assign(state.turns[0], { status: type === 'failed' ? 'failed' : type === 'completed' ? 'completed' : 'inProgress', turnStartedAtMs: startedAt,
       durationMs: ['failed', 'completed'].includes(type) ? Date.now() - startedAt : null });
     for (const client of clients) snapshot(client);
+  }, patchItems(items) {
+    const baseRevision = revision++; state.turns[0].items = items;
+    for (const client of clients) send(client, { type: 'broadcast', sourceClientId: 'smoke-owner', method: 'thread-stream-state-changed', version: 11,
+      params: { hostId, conversationId: 'smoke-chat', change: { type: 'patches', baseRevision, revision,
+        patches: [{ op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', entityKey, 'items'], value: items }] } } });
   }, async close() { for (const client of clients) client.destroy(); await new Promise(resolve => server.close(resolve)); } };
 }
 module.exports = { createOpenaiFixture };

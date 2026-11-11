@@ -13,7 +13,7 @@ async function until(predicate) {
 }
 function encode(value) { const body = Buffer.from(JSON.stringify(value)), head = Buffer.alloc(4); head.writeUInt32LE(body.length); return Buffer.concat([head, body]); }
 function project(value, slice = 7) {
-  const parser = new JsonMetadata(), buffer = Buffer.from(JSON.stringify(value));
+  const parser = new JsonMetadata({ questions: true }), buffer = Buffer.from(JSON.stringify(value));
   for (let i = 0; i < buffer.length; i += slice) parser.feed(buffer.subarray(i, i + slice));
   return parser.finish();
 }
@@ -21,6 +21,12 @@ function state(status = 'inProgress') {
   return { threadRuntimeStatus: { type: status === 'inProgress' ? 'active' : 'idle', activeFlags: [] },
     turns: [{ turnId: 'turn-a', status, turnStartedAtMs: Date.now(), durationMs: null, items: [{ content: 'PRIVATE' }] }], requests: [] };
 }
+const question = (id, count = 1) => ({ type: 'agentMessage', id, text: 'PRIVATE_QUESTION_BODY',
+  questions: Array.from({ length: count }, () => ({ title: 'PRIVATE_QUESTION', options: ['PRIVATE_OPTION'] })) });
+const reply = (id, indices, extra = {}) => ({ type: 'userMessage', id: 'reply-' + id, content: [{ type: 'text',
+  text: '<send_user_message_question_reply>' + JSON.stringify(indices.map(index => ({
+    questionItemId: JSON.stringify(['request_user_input_async', id, index]), question: 'PRIVATE_QUESTION', answer: 'PRIVATE_ANSWER🐉',
+  }))) + '</send_user_message_question_reply>' }], ...extra });
 async function fixture(t, initial = state(), options = {}, hostId = 'local') {
   let now = Date.now(), socket, incoming = Buffer.alloc(0), revision = 0;
   const sent = [], updates = [], id = 'conversation-a';
@@ -87,6 +93,90 @@ test('hosted chat protocol handles concurrent approvals and questions', async t 
   await until(() => [...f.observer.sessions.values()][0].revision === 2); assert.equal(f.observer.snapshot().state, 'waiting');
   f.patches([{ op: 'replace', path: ['requests'], value: [] }]); await until(() => f.observer.snapshot().state === 'running');
 });
+
+test('async questions wait through partial replies and resume only after all accepted answers', async t => {
+  const initial = state(); initial.turns[0].items = [question('ask-a', 2), question('ask-b')];
+  const f = await fixture(t, initial); f.observer.start(); await until(() => f.observer.snapshot().state === 'waiting');
+  f.patches([{ op: 'add', path: ['turns', 0, 'items', 2], value: reply('ask-a', [0]) }]);
+  await until(() => [...f.observer.sessions.values()][0].revision === 1); assert.equal(f.observer.snapshot().state, 'waiting');
+  f.patches([{ op: 'add', path: ['turns', 0, 'items', 3], value: reply('ask-b', [0], { type: 'steeringUserMessage',
+    status: 'pending', input: reply('ask-b', [0]).content, content: undefined }) }]);
+  f.patches([{ op: 'add', path: ['turns', 0, 'items', 4], value: reply('ask-a', [1]) }]);
+  await until(() => [...f.observer.sessions.values()][0].revision === 3); assert.equal(f.observer.snapshot().state, 'waiting');
+  f.patches([{ op: 'replace', path: ['turns', 0, 'items', 3, 'status'], value: 'accepted' }]);
+  await until(() => f.observer.snapshot().state === 'running');
+  f.patches([{ op: 'remove', path: ['turns', 0, 'items', 2] }]);
+  await until(() => f.observer.snapshot().state === 'waiting');
+  f.patches([{ op: 'replace', path: ['turns', 0, 'status'], value: 'completed' },
+    { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle' } }]);
+  await until(() => f.observer.snapshot().state === 'review');
+  assert.ok(!JSON.stringify([...f.observer.sessions.values()]).includes('PRIVATE'));
+});
+
+test('canonical async question patches and full turn replacements retain only bounded question metadata', () => {
+  const history = { entitiesByKey: { 'turn:a': { turnId: 'a', status: 'inProgress', items: [] } },
+    islands: [{ entries: [{ value: 'turn:a' }] }] };
+  const summary = summarize(project({ threadRuntimeStatus: { type: 'active' }, turnHistory: { history } }));
+  const patch = (path, value, op = 'add') => applyPatches(summary, project({ patches: [{ op, path, value }] }).patches);
+  const root = ['turnHistory', 'history', 'entitiesByKey', 'turn:a', 'items'];
+  patch([...root, 0], question('canonical', 2)); assert.equal(stateOf(summary), 'waiting');
+  patch([...root, 0, 'questions'], [{ title: 'PRIVATE' }], 'replace');
+  patch([...root, 1], reply('canonical', [0])); assert.equal(stateOf(summary), 'running');
+  patch(root, [question('next')], 'replace'); assert.equal(stateOf(summary), 'waiting');
+  patch(root, undefined, 'remove'); assert.equal(stateOf(summary), 'running');
+  const legacy = summarize(project(state()));
+  applyPatches(legacy, project({ patches: [{ op: 'replace', path: ['turns'], value: [{ turnId: 'b', status: 'inProgress', items: [question('legacy')] }] }] }).patches);
+  assert.equal(stateOf(legacy), 'waiting');
+  assert.ok(!JSON.stringify(summary).includes('PRIVATE'));
+});
+
+test('real desktop tail turns without server IDs retain async questions through snapshots and patches', async t => {
+  const key = 'tail:0:local:unassigned-turn';
+  const initial = { threadRuntimeStatus: { type: 'active', activeFlags: [] }, turns: [], requests: [],
+    turnHistory: { kind: 'canonical', history: { generation: 0,
+      entitiesByKey: { [key]: { turnId: null, status: 'inProgress', items: [question('tail-question', 2)] },
+        'item:private': { type: 'agentMessage', text: 'PRIVATE_EXCLUDED' } },
+      islands: [{ id: 'tail:0', entries: [{ key, value: key }] }] } } };
+  const f = await fixture(t, initial); f.observer.start(); await until(() => f.observer.snapshot().state === 'waiting');
+  const session = () => [...f.observer.sessions.values()][0];
+  assert.equal(session().summary.turn.key, key); assert.equal(session().summary.turn.turnId, null);
+  const root = ['turnHistory', 'history', 'entitiesByKey', key];
+  f.patches([{ op: 'replace', path: [...root, 'turnId'], value: 'server-turn-a' },
+    { op: 'add', path: [...root, 'items', 1], value: reply('tail-question', [0]) }]);
+  await until(() => session().revision === 1); assert.equal(f.observer.snapshot().state, 'waiting');
+  assert.equal(session().summary.turn.turnId, 'server-turn-a');
+  f.patches([{ op: 'add', path: [...root, 'items', 2], value: reply('tail-question', [1]) }]);
+  await until(() => f.observer.snapshot().state === 'running');
+  f.patches([{ op: 'replace', path: [...root, 'items'], value: [question('next-tail-question')] }]);
+  await until(() => f.observer.snapshot().state === 'waiting');
+  f.patches([{ op: 'replace', path: [...root, 'status'], value: 'completed' },
+    { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle' } }]);
+  await until(() => f.observer.snapshot().state === 'review');
+  assert.ok(!JSON.stringify([...f.observer.sessions.values()]).includes('PRIVATE'));
+});
+
+test('async projection skips huge messages and reply text; historical and malformed replies cannot settle questions', () => {
+  const initial = state();
+  const answer = reply('large', [0]);
+  answer.content[0].text = answer.content[0].text.replace('PRIVATE_ANSWER🐉', '私密🐉'.repeat(200000));
+  initial.turns[0].items = [...Array.from({ length: 5000 }, (_, i) => ({ type: 'agentMessage', id: 'body-' + i, text: 'PRIVATE' })),
+    question('large'), answer];
+  const filtered = project(initial, 31), summary = summarize(filtered);
+  assert.equal(stateOf(summary), 'running'); assert.ok(JSON.stringify(filtered).length < 1000);
+  assert.ok(!JSON.stringify(filtered).includes('PRIVATE')); assert.ok(!JSON.stringify(filtered).includes('私密'));
+  for (const suffix of ['junk', '']) {
+    initial.turns[0].items = [question('large'), reply('other-turn', [0])];
+    initial.turns[0].items[1].content[0].text += suffix;
+    assert.equal(stateOf(summarize(project(initial))), 'waiting');
+  }
+  initial.turns[0].items = [question('large'), reply('large', [0])];
+  initial.turns[0].items[1].content[0].text += 'junk';
+  assert.equal(stateOf(summarize(project(initial))), 'waiting');
+  initial.turns[0].status = 'completed'; initial.threadRuntimeStatus.type = 'idle';
+  assert.equal(stateOf(summarize(project(initial))), 'idle');
+  initial.turns[0].items = Array.from({ length: 65 }, (_, i) => question('limit-' + i));
+  assert.throws(() => project(initial), /limit/);
+});
 test('completion expires; historical completion is not replayed; failure differs from interruption', async t => {
   const f = await fixture(t); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
   f.patches([{ op: 'replace', path: ['turns', 0, 'status'], value: 'completed' }, { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle' } }]);
@@ -104,6 +194,45 @@ test('revision gaps request fresh snapshots', async t => {
   await until(() => [...f.observer.sessions.values()][0].refreshAt); assert.equal(f.observer.snapshot().state, 'idle'); f.advance(1001);
   await until(() => f.observer.snapshot().state === 'running');
   assert.equal(f.sent.filter(message => message.params?.following).length, 2);
+});
+
+test('message completion metadata removals keep real desktop tail turns subscribed for later approvals', async t => {
+  const key = 'tail:0:local:approval-turn';
+  const initial = { threadRuntimeStatus: { type: 'active', activeFlags: [] }, turns: [], requests: [],
+    turnHistory: { kind: 'canonical', history: { entitiesByKey: { [key]: { turnId: 'approval-turn', status: 'inProgress',
+      items: [{ type: 'agentMessage', id: 'message-one', text: 'PRIVATE' }], completedItemIds: { 'message-one': true },
+      agentMessageCompletedAtMsById: { 'message-one': 1 } } }, islands: [{ entries: [{ value: key }] }] } } };
+  const f = await fixture(t, initial); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
+  const root = ['turnHistory', 'history', 'entitiesByKey', key];
+  for (let i = 0; i < 5; i++) f.patches([
+    { op: 'remove', path: [...root, 'completedItemIds', 'message-one'] },
+    { op: 'remove', path: [...root, 'agentMessageCompletedAtMsById'] },
+    { op: 'remove', path: [...root, 'itemTimingsById', 'message-one'] },
+  ]);
+  await until(() => [...f.observer.sessions.values()][0].revision === 5);
+  f.patches([{ op: 'add', path: ['requests', 0], value: { id: 123, method: 'item/permissions/requestApproval', params: { reason: 'PRIVATE' } } }]);
+  await until(() => f.observer.snapshot().state === 'waiting');
+  f.patches([{ op: 'remove', path: ['requests', 0] }]); await until(() => f.observer.snapshot().state === 'running');
+  assert.equal(f.observer.snapshot().info.degraded, false);
+  assert.equal(f.sent.filter(message => message.params?.following === true).length, 1);
+  assert.ok(!JSON.stringify([...f.observer.sessions.values()]).includes('PRIVATE'));
+  const legacy = summarize(project(state()));
+  assert.doesNotThrow(() => applyPatches(legacy, [{ op: 'remove', path: ['turns', 0, 'completedItemIds', 'old'] }]));
+  assert.throws(() => applyPatches(legacy, [{ op: 'remove', path: ['turns', 0] }]), /turn-removal/);
+});
+
+test('patches arriving during snapshot recovery do not exhaust the resync budget or block later approvals', async t => {
+  const f = await fixture(t); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
+  f.patches([{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active' } }], 999);
+  await until(() => [...f.observer.sessions.values()][0].refreshAt);
+  for (let i = 0; i < 6; i++) f.patches([{ op: 'replace', path: ['turns', 0, 'status'], value: 'inProgress' }]);
+  await delay(30);
+  assert.equal([...f.observer.sessions.values()][0].resyncCount, 1);
+  assert.equal(f.observer.snapshot().info.degraded, false);
+  f.advance(1001); await until(() => f.observer.snapshot().state === 'running');
+  f.patches([{ op: 'add', path: ['requests', 0], value: { id: 'after-recovery', method: 'item/commandExecution/requestApproval' } }]);
+  await until(() => f.observer.snapshot().state === 'waiting');
+  assert.equal(f.observer.snapshot().info.degraded, false);
 });
 test('unsupported versions unsubscribe and degrade without revealing payloads', async t => {
   const f = await fixture(t); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');

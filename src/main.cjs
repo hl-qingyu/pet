@@ -671,6 +671,8 @@ async function smokeTest() {
       if (JSON.stringify([...openaiObserver.sessions.values()]).includes('PRIVATE_SMOKE_TEXT')) throw new Error('OpenAI 正文不应被保留');
       showPanel('settings'); await panelWindow.webContents.executeJavaScript(`document.querySelector('#openai-status').scrollIntoView({block:'center'});`);
       fs.writeFileSync(path.join(dataRoot, 'openai-settings-smoke.png'), (await panelWindow.webContents.capturePage()).toPNG());
+      themeChecks.push(await require('./testing/openai-question-smoke.cjs').smokeOpenaiQuestions({ openaiFixture, petWindow, waitFor,
+        getState: () => currentState, getObserver: () => openaiObserver, dataRoot }));
       themeChecks.push(await require('./testing/codex-cli-smoke.cjs').smokeCodexCli({ panelWindow, store, applyConfig, waitFor,
         getObservers: () => ({ desktop: openaiObserver, cli: cliObserver }), getState: () => currentState,
         getRuntime: () => runtime, openaiFixture, dataRoot, appRoot, saveTheme }));

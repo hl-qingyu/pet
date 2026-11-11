@@ -2,12 +2,13 @@ const net = require('node:net');
 const path = require('node:path');
 const os = require('node:os');
 const { JsonMetadata } = require('./json-metadata.cjs');
+const { itemPath, MAX_ITEMS } = require('./question-metadata.cjs');
 
 const LIMITS = Object.freeze({ frame: 16 * 1024 * 1024, chunk: 64 * 1024, sessions: 32, requests: 32, timeout: 5000 });
 const RANK = { idle: 0, review: 1, failed: 2, running: 3, waiting: 4 };
 const WORDS = { running: 'ChatGPT 正在处理……', waiting: 'ChatGPT 正在等你确认……', review: '这一步完成了。', failed: '这一步没有完成。' };
 const safeId = value => typeof value === 'string' && /^[\w:./-]{1,128}$/.test(value);
-const needsInput = request => /requestApproval|requestUserInput|elicitation|planImplementation/i.test(request?.method || '') && request.completedAtMs == null;
+const needsInput = request => /requestApproval|requestUserInput|requestOptionPicker|elicitation|planImplementation/i.test(request?.method || '') && request.completedAtMs == null;
 const turnFields = new Set(['status', 'turnId', 'turnStartedAtMs', 'durationMs', 'error']);
 function cwdOf(value) {
   if (value == null) return '';
@@ -26,8 +27,19 @@ function matchesWorkspace(session, workspace) {
 }
 function compactTurn(turn, key, index) {
   if (!turn || typeof turn !== 'object') return null;
+  const questionItems = (turn.items || []).filter(item => item && (Number.isInteger(item.questions) || Array.isArray(item.replyIds) ||
+    ['userMessage', 'steeringUserMessage'].includes(item.type)))
+    .map(({ index, id, questions, replyIds, type, status, steerAcknowledged }) => ({ index, id, questions, replyIds, type, status, steerAcknowledged }));
+  if (questionItems.length > MAX_ITEMS) throw new Error('question-item-limit');
   return { key, index, status: turn.status, turnId: turn.turnId, turnStartedAtMs: turn.turnStartedAtMs,
-    durationMs: turn.durationMs, error: Boolean(turn.error) };
+    durationMs: turn.durationMs, error: Boolean(turn.error), questionItems };
+}
+function unansweredQuestions(turn) {
+  if (turn?.status !== 'inProgress') return false;
+  const answered = new Set(turn.questionItems.flatMap(item => item.type !== 'steeringUserMessage' ||
+    item.status === 'accepted' || item.steerAcknowledged === true ? item.replyIds || [] : []));
+  return turn.questionItems.some(item => item.questions && Array.from({ length: item.questions }, (_, i) =>
+    JSON.stringify(['request_user_input_async', item.id, i])).some(id => !answered.has(id)));
 }
 function requests(value) {
   if (!Array.isArray(value) || value.length > LIMITS.requests) throw new Error('request-limit');
@@ -57,7 +69,7 @@ function stateOf(summary) {
   if (summary.runtime?.type === 'notLoaded') return 'idle';
   if (summary.runtime?.type === 'systemError') return 'failed';
   if (flags.some(flag => /waiting.*(?:approval|input|question)/i.test(flag)) ||
-    [...summary.requests, ...summary.externalRequests].some(needsInput)) return 'waiting';
+    [...summary.requests, ...summary.externalRequests].some(needsInput) || unansweredQuestions(summary.turn)) return 'waiting';
   if (summary.runtime?.type === 'active' || summary.pending) return 'running';
   if (summary.turn?.status === 'failed') return 'failed';
   if (summary.turn?.status === 'inProgress') return 'running';
@@ -66,11 +78,36 @@ function stateOf(summary) {
   if (summary.turn?.status === 'completed') return 'idle';
   throw new Error('status-layout');
 }
+function applyItemPatch(turn, patch, offset) {
+  const path = patch.path.slice(offset + 1), index = path[0], items = turn.questionItems;
+  if (!path.length) { turn.questionItems = patch.op === 'remove' ? [] : patch.value; return; }
+  const previous = items.find(item => item.index === index);
+  if (path.length === 1) {
+    turn.questionItems = items.filter(item => item.index !== index || patch.op === 'add');
+    if (patch.op === 'add') for (const item of turn.questionItems) if (item.index >= index) item.index++;
+    if (patch.op === 'remove') for (const item of turn.questionItems) if (item.index > index) item.index--;
+    if (patch.op !== 'remove' && patch.value) turn.questionItems.push({ ...patch.value, index });
+    if (turn.questionItems.length > MAX_ITEMS) throw new Error('question-item-limit');
+  } else if (path.length === 2 && path[1] === 'questions') {
+    if (patch.op === 'remove' || patch.value === 0) turn.questionItems = items.filter(item => item.index !== index);
+    else if (previous?.id) previous.questions = patch.value;
+    else throw new Error('question-resnapshot');
+  } else if (path.length === 2 && ['status', 'steerAcknowledged'].includes(path[1])) {
+    if (previous) previous[path[1]] = patch.op === 'remove' ? undefined : patch.value;
+  } else if (path[1] !== 'text' && (previous || path[1] === 'questions')) {
+    throw new Error('question-resnapshot');
+  }
+}
 function applyPatches(summary, patches) {
   if (!Array.isArray(patches) || patches.length > 512) throw new Error('patch-limit');
   for (const patch of patches) {
     const p = patch.path;
     if (!Array.isArray(p) || p.length > 32 || !['add', 'remove', 'replace'].includes(patch.op)) throw new Error('patch-layout');
+    const item = itemPath(p);
+    if (item && item.role !== 'turn') {
+      if ((item.offset === 2 ? p[1] === summary.turn?.index : p[3] === summary.turn?.key)) applyItemPatch(summary.turn, patch, item.offset);
+      continue;
+    }
     if (p.some(part => ['items', 'content', 'input', 'params', 'title', 'text', 'summary', 'acceptedTextChanges'].includes(part))) continue;
     const value = patch.value;
     if (p.length === 0) { Object.assign(summary, summarize(value)); continue; }
@@ -108,7 +145,7 @@ function applyPatches(summary, patches) {
       else if (p.length === 2 && patch.op !== 'remove') {
         if (!summary.turn || p[1] >= summary.turn.index) summary.turn = compactTurn(value, null, p[1]);
       } else if (p[1] === summary.turn?.index && p.length === 3 && turnFields.has(p[2])) summary.turn[p[2]] = p[2] === 'error' ? Boolean(value) : value;
-      else if (patch.op === 'remove') throw new Error('turn-removal');
+      else if (patch.op === 'remove' && p.length === 2) throw new Error('turn-removal');
     } else if (p[0] === 'turnHistory') {
       if (p.length === 1) { const updated = summarize({ turnHistory: value, turns: [], requests: [], threadRuntimeStatus: summary.runtime }); summary.turn = updated.turn; }
       else if (p.length === 2 && p[1] === 'history') summary.turn = summarize({ turnHistory: { history: value }, threadRuntimeStatus: summary.runtime }).turn;
@@ -119,7 +156,7 @@ function applyPatches(summary, patches) {
           if (turn && (!summary.turn || key === summary.turn.key || turn.turnStartedAtMs >= summary.turn.turnStartedAtMs)) summary.turn = turn;
         } else if (key === summary.turn?.key) {
           if (p.length === 5 && turnFields.has(p[4])) summary.turn[p[4]] = p[4] === 'error' ? Boolean(value) : value;
-          else if (patch.op === 'remove') throw new Error('turn-removal');
+          else if (patch.op === 'remove' && p.length === 4) throw new Error('turn-removal');
         }
       }
     }
@@ -137,7 +174,7 @@ class Frames {
         const count = Math.min(4 - this.headerUsed, buffer.length - position);
         buffer.copy(this.header, this.headerUsed, position, position + count); this.headerUsed += count; position += count;
         if (this.headerUsed < 4) return;
-        this.headerUsed = 0; this.remaining = this.header.readUInt32LE(); this.fault = false; this.parser = new JsonMetadata();
+        this.headerUsed = 0; this.remaining = this.header.readUInt32LE(); this.fault = false; this.parser = new JsonMetadata({ questions: true });
         if (!this.remaining || this.remaining > LIMITS.frame) { this.fault = true; this.onFault(); }
         if (!this.remaining) throw new Error('zero-frame');
       }
@@ -266,7 +303,12 @@ class OpenaiObserver {
       if (change.revision < session.revision || (change.type === 'patches' && change.revision === session.revision)) return;
       if (change.type === 'snapshot') session.summary = summarize(change.conversationState);
       else if (change.type === 'patches' && session.summary && change.baseRevision === session.revision) applyPatches(session.summary, change.patches);
-      else { this.resnapshot(session); return; }
+      else {
+        // Changes can keep arriving while a fresh snapshot is being requested.
+        // Wait for that snapshot instead of counting each patch as another fault.
+        if (!session.refreshAt && !session.snapshotAt) this.resnapshot(session);
+        return;
+      }
       const previous = session.state, next = stateOf(session.summary), now = this.now();
       const turn = session.summary.turn;
       const completedAt = Number.isFinite(turn?.turnStartedAtMs) && Number.isFinite(turn?.durationMs) ? turn.turnStartedAtMs + turn.durationMs : 0;

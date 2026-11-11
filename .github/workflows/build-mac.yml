@@ -1,4 +1,4 @@
-name: 打包 Mac 桌宠
+name: 打包并发布 Windows 和 Mac 桌宠
 
 on:
   workflow_dispatch:
@@ -7,11 +7,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: mac-release
+  group: desktop-release
   cancel-in-progress: false
 
 jobs:
-  build:
+  mac:
     runs-on: macos-latest
 
     steps:
@@ -39,6 +39,47 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: 下载代码
+        uses: actions/checkout@v4
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装依赖
+        run: npm ci
+      - name: 打包 Windows 版本
+        run: npm run build:win -- --publish never
+      - name: 生成发行包并检查隐私文件
+        run: python scripts/package-release.py
+      - name: 上传 Windows 安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: DragonDesk-windows
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+
+  release:
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载代码
+        uses: actions/checkout@v4
+      - name: 下载全部安装包
+        uses: actions/download-artifact@v4
+        with:
+          pattern: DragonDesk-*
+          path: release-assets
+          merge-multiple: true
       - name: 发布到 GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,6 +90,6 @@ jobs:
           version=$(node -p "require('./package.json').version")
           tag="DragonDesk-${version}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes "Mac 安装包：Apple M 系列芯片请选择 arm64，Intel 芯片请选择 x64。当前版本未签名。"
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes "Windows 请选择 windows-x64；Mac 的 Apple M 系列芯片请选择 mac-arm64，Intel 芯片请选择 mac-x64。当前版本未签名。"
           fi
-          gh release upload "$tag" dist/*.zip --clobber
+          gh release upload "$tag" release-assets/* --clobber

@@ -3,7 +3,8 @@
 ## 版本号与 GitHub Releases 发布
 
 - 发布新版前必须更新 `package.json` 的 `version`，并同步更新 `package-lock.json`；可执行 `npm version <新版本号> --no-git-tag-version`，再提交并推送版本文件及本次改动。
-- Mac 打包使用 `.github/workflows/build-mac.yml`，推送代码后在 GitHub Actions 中通过 `Run workflow` 选择对应分支运行。
+- Windows 和 Mac 云端打包统一使用 `.github/workflows/build-mac.yml`，推送代码后在 GitHub Actions 中通过 `Run workflow` 选择对应分支运行；两个平台并行构建，全部成功后统一发布。
+- Windows 使用 `npm run build:win -- --publish never`，再通过 `python scripts/package-release.py` 生成 ZIP 和 SHA256 校验文件并检查隐私文件；与 Mac 的两个 ZIP 一起上传到对应版本 Release。云端构建不替代本地 Windows 打包与交付要求。
 - 工作流按构建代码中 `package.json` 的版本号，将产物发布到 `DragonDesk-<版本号>` 对应的 GitHub Release；不存在时创建，存在时更新附件。
 - 分别上传 arm64 和 x64 的 ZIP，供 Apple M 系列和 Intel Mac 用户单独下载；同时保留 Actions 构建产物。
 - 同一版本重复打包会覆盖 Release 中的同名 ZIP；正式发布新版必须先升级版本号，避免覆盖旧版产物。

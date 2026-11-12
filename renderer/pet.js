@@ -4,10 +4,25 @@ const names = ['idle', 'running-right', 'running-left', 'waving', 'jumping', 'fa
 let accountInsufficient = false, accountDepleted = false, depletionFinished = false;
 let config, state = 'idle', row = 0, frame = 0, next = 0, hover = false, hoverJumpDone = false, hoverJumpEnd = 0, drag = false, moved = false, dragStartX = 0, dragStartY = 0, direction = null, bubbleTimer, clickTimer;
 function cell(r,c) {
-  sprite.style.backgroundPosition = `${-c*192}px ${-r*208}px`;
-  art.style.transform = `translateX(${window.petMotion.offset(document.documentElement.dataset.theme,r,c)}px)`;
+  const theme = document.documentElement.dataset.theme;
+  // 原右跑多帧的腿部姿势近似；复用左跑的镜像，让两个方向保持相同步态。
+  const mirror = theme === 'whale' && r === 1;
+  const shownRow = mirror ? 2 : r;
+  sprite.style.backgroundPosition = `${-c*192}px ${-shownRow*208}px`;
+  art.style.transform = `translateX(${window.petMotion.offset(theme,shownRow,c)}px)${mirror ? ' scaleX(-1)' : ''}`;
 }
-function choose(name) { if (accountDepleted && document.documentElement.dataset.theme === 'whale') name = 'failed'; const r = Math.max(0, names.indexOf(name)); if (row !== r) { row = r; frame = 0; next = 0; } }
+function choose(name) {
+  const theme = document.documentElement.dataset.theme;
+  if (accountDepleted && theme === 'whale') name = 'failed';
+  const r = Math.max(0, names.indexOf(name));
+  if (row === r) return;
+  const turning = theme === 'whale' && drag && moved && [1,2].includes(row) && [1,2].includes(r);
+  row = r;
+  if (turning) {
+    // frame points to the next cell: flip the displayed stride without restarting its clock.
+    if (next) cell(row, (frame + window.petMotion.durations(theme,row).length - 1) % window.petMotion.durations(theme,row).length);
+  } else { frame = 0; next = 0; }
+}
 function say(text) { if (!text) return; clearTimeout(bubbleTimer); (document.querySelector('#bubble-text') || bubble).textContent = text.replace(/\s+/g, ' ').trim(); bubble.classList.add('visible'); bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), 6500); }
 function configure(value) {
   const theme = window.petThemes.resolve(value);
@@ -79,7 +94,8 @@ document.querySelector('#chat').onclick = () => window.dragon.send('panel:open',
 document.querySelector('#settings').onclick = () => window.dragon.send('panel:open','settings');
 document.querySelector('#hide').onclick = () => window.dragon.send('pet:hide');
 window.dragon.on('pet:state', payload => {
-  state = payload.state; choose(state);
+  state = payload.state;
+  if (!drag || !moved) choose(state);
   if (payload.clearBubble) { clearTimeout(bubbleTimer); bubble.classList.remove('visible'); }
   say(payload.bubble);
 });

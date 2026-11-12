@@ -566,6 +566,8 @@ async function smokeTest() {
     status('waving');
     await waitFor(() => petWindow.webContents.executeJavaScript('parseInt(document.querySelector("#sprite").style.backgroundPosition.split(" ")[1]) === -624'));
     status('idle');
+    themeChecks.push(await require('./testing/whale-run-smoke.cjs').smokeWhaleRun({ petWindow, send, status, waitFor,
+      dataRoot, scale: store.value.pet.scale }));
     await panelWindow.webContents.executeJavaScript(`document.querySelector('#follow').checked=true;document.querySelector('#save').click();`);
     await waitFor(() => store.value.pet.followMouse);
     for (let direction = 0; direction < 16; direction++) {

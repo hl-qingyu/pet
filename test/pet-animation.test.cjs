@@ -10,7 +10,8 @@ async function renderer(model = 'deepseek-flash') {
   config.chat.provider = 'custom'; config.providers.custom.model = model; config.pet.followMouse = false;
   function element(id) {
     if (!elements.has(id)) elements.set(id, {style:{},dataset:{},events:{},classList:{add(){},remove(){},toggle(){}},
-      addEventListener(name, fn) { this.events[name] = fn; }, setAttribute(){}});
+      addEventListener(name, fn) { this.events[name] = fn; }, setAttribute(){},
+      setPointerCapture(){},hasPointerCapture(){return false;},releasePointerCapture(){}});
     return elements.get(id);
   }
   const context = vm.createContext({
@@ -23,6 +24,7 @@ async function renderer(model = 'deepseek-flash') {
   await Promise.resolve(); await Promise.resolve();
   return {sprite:element('#sprite'),art:element('#sprite-art'),
     state:value=>handlers.get('pet:state')({state:value}),
+    dragDirection:value=>handlers.get('pet:drag-direction')(value),
     account:value=>handlers.get('dsh:account')(value),
     tick:time=>{ const next=frames.shift();assert.ok(next);next(time);return element('#sprite').style.backgroundPosition; }};
 }
@@ -35,6 +37,41 @@ test('whale hover plays one complete jump and then rests until the pointer reent
   assert.ok(rest>=80,'last jump frame should retain its duration');
   assert.ok(frames.slice(rest).every(position=>position.endsWith(' 0px')));
   app.sprite.events.pointerleave();app.sprite.events.pointerenter();assert.ok(app.tick(3010).endsWith(' -832px'));
+});
+
+function drag(app) {
+  app.sprite.events.pointerdown({button:0,pointerId:1,screenX:100,screenY:100});
+  app.sprite.events.pointermove({pointerId:1,screenX:120,screenY:100});
+}
+
+test('whale left and right runs use matching strides with no pause at the loop boundary', async () => {
+  for (const direction of ['running-left','running-right']) {
+    const app=await renderer();drag(app);app.dragDirection(direction);
+    for(let frame=0;frame<10;frame++)assert.equal(app.tick(frame*120),`${-(frame%8)*192}px -416px`);
+    assert.equal(app.art.style.transform,direction==='running-right'?'translateX(0px) scaleX(-1)':'translateX(0px)');
+    assert.equal(app.sprite.style.transform,undefined,'mirroring must leave the drag target fixed');
+  }
+});
+
+test('whale changes drag direction at the current stride and restores pending work when released', async () => {
+  const app=await renderer();drag(app);app.dragDirection('running-right');
+  app.tick(0);app.tick(120);assert.equal(app.tick(240),'-384px -416px');
+  app.dragDirection('running-left');
+  assert.equal(app.tick(250),'-384px -416px');assert.equal(app.art.style.transform,'translateX(0px)');
+  assert.equal(app.tick(360),'-576px -416px');
+  app.state('running');assert.equal(app.tick(370),'-576px -416px');
+  app.dragDirection('running-right');assert.equal(app.tick(380),'-576px -416px');
+  assert.equal(app.art.style.transform,'translateX(0px) scaleX(-1)');
+  app.sprite.events.pointerup({pointerId:1});assert.equal(app.tick(390),'0px -1456px');
+});
+
+test('dragon keeps its separate running rows and original loop timing', async () => {
+  for (const [direction,row] of [['running-right',1],['running-left',2]]) {
+    const app=await renderer('gpt-codex');drag(app);app.dragDirection(direction);
+    for(let frame=0;frame<8;frame++)assert.equal(app.tick(frame*120),`${-frame*192}px ${-row*208}px`);
+    assert.equal(app.tick(960),`-1344px ${-row*208}px`);assert.equal(app.tick(1060),`0px ${-row*208}px`);
+    assert.equal(app.art.style.transform,'translateX(0px)');
+  }
 });
 
 test('working whale holds frames longer while visual registration leaves the pointer target still', async () => {

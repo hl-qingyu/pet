@@ -2,16 +2,29 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 
-async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel }) {
+async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel, dshAccount }) {
   const original = structuredClone(store.value), calls = [];
+  let failNext = false, holdNext = false, releaseRequest, dshCalls = 0;
+  const originalDsh = { request: dshAccount.request, readCredentials: dshAccount.readCredentials };
   const server = http.createServer((req, res) => {
+    if (req.url === '/dsh') {
+      dshCalls++;
+      if (req.headers['x-dsh-auth-token'] !== 'dsh-local-test') { res.writeHead(401); res.end('{}'); return; }
+      const finish = () => res.end(JSON.stringify({ code: 0, data: { biz_code: 0, biz_data: {
+        normal_wallets: [{ currency: 'CNY', balance: dshCalls === 1 ? '0' : '15.5' }], bonus_wallets: [], total_costs: [{ currency: 'CNY', amount: '2.5' }]
+      } } }));
+      if (holdNext) { holdNext = false; releaseRequest = finish; } else finish();
+      return;
+    }
     calls.push(req.url);
     if (req.headers.authorization !== 'Bearer quota-smoke-key') { res.writeHead(401); res.end('{}'); return; }
     if (req.url === '/missing/v1/usage') { res.end(JSON.stringify({ balance: 999, quota: { remaining: 999 } })); return; }
     if (req.url === '/error/v1/usage') { res.writeHead(401); res.end('{}'); return; }
-    res.end(JSON.stringify({ isValid: true, status: 'active', rate_limits: [{ window: '1d',
+    if (failNext) { failNext = false; res.writeHead(401); res.end('{}'); return; }
+    const finish = () => res.end(JSON.stringify({ isValid: true, status: 'active', rate_limits: [{ window: '1d',
       remaining: 121.9060417, used: 28.0939583, window_start: new Date(Date.now() - 3600000).toISOString(),
       reset_at: new Date(Date.now() + 3600000).toISOString() }] }));
+    if (holdNext) { holdNext = false; releaseRequest = finish; } else finish();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -54,6 +67,19 @@ async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, w
       return {font:style.fontSize,wrap:style.whiteSpace,clipped:node.scrollWidth>node.clientWidth};
     })()`);
     if (layout.font !== '14px' || layout.wrap !== 'nowrap' || layout.clipped) throw new Error('额度气泡布局不符合要求');
+    const clickRefresh = () => petWindow.webContents.executeJavaScript(`document.querySelector('#account-refresh').click()`);
+    failNext = true; await clickRefresh();
+    await waitFor(async () => (await bubble()).text === 'Sub2API 额度暂不可用');
+    holdNext = true; releaseRequest = null; await clickRefresh();
+    await waitFor(() => Boolean(releaseRequest));
+    const pendingCalls = calls.length;
+    if (!await petWindow.webContents.executeJavaScript(`document.querySelector('#account-refresh').disabled && document.querySelector('#account-refresh').getAttribute('aria-busy')==='true'`)) throw new Error('刷新中按钮没有禁用');
+    await clickRefresh();
+    await petWindow.webContents.executeJavaScript(`Promise.all([window.dragon.invoke('sub2api:quota-refresh'),window.dragon.invoke('dsh:account-refresh')])`);
+    if (calls.length !== pendingCalls || dshCalls) throw new Error('手动刷新重叠或错误请求了 DSH');
+    releaseRequest();
+    await waitFor(async () => (await bubble()).text === '今日余额 121.91 · 已用 28.09');
+    await waitFor(() => petWindow.webContents.executeJavaScript(`!document.querySelector('#account-refresh').disabled`));
     fs.writeFileSync(path.join(dataRoot, 'sub2api-pet-smoke.png'), (await petWindow.webContents.capturePage()).toPNG());
     await run(`document.querySelector('#service-source-field').scrollIntoView({block:'center'})`);
     await run(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
@@ -87,9 +113,35 @@ async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, w
     await choose('custom'); await save();
     await waitFor(async () => !(await bubble()).hidden);
     await edit({}, false); await save(); await waitFor(async () => (await bubble()).hidden);
+    const callsBeforeDisabled = calls.length;
+    await petWindow.webContents.executeJavaScript(`window.dragon.invoke('sub2api:quota-refresh')`);
+    if (calls.length !== callsBeforeDisabled) throw new Error('关闭后仍可手动查询');
+    // Exercise the independent DSH route against local fixtures only; never read real login credentials.
+    const dshSetup = structuredClone(store.value); dshSetup.chat.provider = 'deepseek';
+    dshSetup.providers.deepseek.model = 'deepseek-smoke'; dshSetup.providers.deepseek.apiKey = 'dsh-chat-local-test';
+    store.save(dshSetup); applyConfig();
+    dshAccount.readCredentials = async () => ({ records: { 'deepseek-account-platform/default': {
+      kind: 'grant', payload: { issuer: 'https://platform.deepseek.com', token: 'dsh-local-test' }
+    } } });
+    dshAccount.request = (_url, options) => fetch(`${baseUrl}/dsh`, options);
+    dshAccount.configure(true);
+    await waitFor(async () => (await bubble()).text === '余额 ¥0.00 · 消费 ¥2.50');
+    if (!await petWindow.webContents.executeJavaScript(`accountDepleted && document.querySelector('#account-refresh').title==='刷新 DSH 账号余额'`)) throw new Error('DSH 来源或余额动画状态无效');
+    holdNext = true; releaseRequest = null; await clickRefresh(); await waitFor(() => Boolean(releaseRequest));
+    if (!await petWindow.webContents.executeJavaScript(`accountDepleted && document.querySelector('#account-refresh').disabled`)) throw new Error('DSH 刷新不应清除已确认的耗尽状态');
+    await petWindow.webContents.executeJavaScript(`Promise.all([window.dragon.invoke('dsh:account-refresh'),window.dragon.invoke('sub2api:quota-refresh')])`);
+    if (dshCalls !== 2 || calls.length !== callsBeforeDisabled) throw new Error('DSH 刷新重叠或串用 Sub2API');
+    releaseRequest(); await waitFor(async () => (await bubble()).text === '余额 ¥15.50 · 消费 ¥2.50');
+    if (!await petWindow.webContents.executeJavaScript(`!accountDepleted && !document.querySelector('#account-refresh').disabled`)) throw new Error('DSH 刷新后没有恢复状态');
+    fs.writeFileSync(path.join(dataRoot, 'dsh-account-refresh-smoke.png'), (await petWindow.webContents.capturePage()).toPNG());
+    dshAccount.stop();
+    await petWindow.webContents.executeJavaScript(`window.dragon.invoke('dsh:account-refresh')`);
+    if (dshCalls !== 2) throw new Error('DSH 关闭后仍可刷新');
     return { sub2apiSavedProviderDrafts: true, sourceGuards: true, independentOfModelAndObservers: true,
-      quotaFormattingAndLayout: true, unsupportedAndError: true, providerSwitch: true, animationIsolation: true, pass: true };
+      quotaFormattingAndLayout: true, unsupportedAndError: true, providerSwitch: true, animationIsolation: true,
+      sub2apiManualRetry: true, dshManualRefresh: true, refreshSourceIsolation: true, refreshSingleFlight: true, pass: true };
   } finally {
+    dshAccount.stop(); Object.assign(dshAccount, originalDsh);
     store.save(original); applyConfig();
     await run(`window.dragon.invoke('bootstrap').then(data=>fill(data.config))`);
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

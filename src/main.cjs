@@ -301,6 +301,14 @@ function handle(channel, callback) { ipcMain.handle(channel, async (event, ...ar
 function on(channel, callback) { ipcMain.on(channel, (event, ...args) => { guard(event); callback(...args); }); }
 
 function setupIPC() {
+  handle('sub2api:quota-refresh', () => {
+    const provider = store.value.providers[store.value.chat.provider];
+    if (providerSource(provider) === 'sub2api' && accountSnapshot?.source === 'sub2api') return sub2apiQuota.refresh();
+  });
+  handle('dsh:account-refresh', () => {
+    const provider = store.value.providers[store.value.chat.provider];
+    if (providerSource(provider) !== 'sub2api' && accountSnapshot?.source === 'dsh') return dshAccount.refresh();
+  });
   handle('bootstrap', () => ({ config: store.value, configPath, runtime, account: accountSnapshot, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request), platform: process.platform }));
   handle('shortcut:recording', active => setShortcutRecording(active));
   handle('config:save', next => {
@@ -424,7 +432,7 @@ async function smokeTest() {
       while (Date.now() < end) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 40)); }
       throw new Error('UI smoke condition timed out');
     };
-    themeChecks.push(await require('./testing/sub2api-quota-smoke.cjs').smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel }));
+    themeChecks.push(await require('./testing/sub2api-quota-smoke.cjs').smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel, dshAccount }));
     // Switching the selected model changes only the visible integration form;
     // both forms keep their independent, unsaved values until Save is pressed.
     const integrationForms = await panelWindow.webContents.executeJavaScript(`(() => {

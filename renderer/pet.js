@@ -71,7 +71,7 @@ sprite.addEventListener('dblclick', () => { clearTimeout(clickTimer); window.dra
 sprite.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.dragon.send('panel:open','chat'); } });
 let hit = null;
 document.addEventListener('mousemove', event => {
-  const over = Boolean(event.target.closest('#sprite,#toolbar'));
+  const over = Boolean(event.target.closest('#sprite,#toolbar,#account-refresh'));
   if (over !== hit && !drag) { hit = over; window.dragon.send('pet:hit',over); }
 });
 document.addEventListener('contextmenu', e => { e.preventDefault(); window.dragon.send('pet:menu'); });
@@ -99,6 +99,14 @@ function showAccount(value) {
   accountInsufficient = !sub2api && value?.insufficient === true;
   const element = document.querySelector('#account-bubble');
   if (!element) return;
+  document.querySelector('#account-controls').hidden = !value;
+  const refresh = document.querySelector('#account-refresh');
+  refresh.disabled = !value || value.loading === true || value.refreshing === true;
+  refresh.classList.toggle('refreshing', value?.refreshing === true);
+  const label = value?.source === 'sub2api' ? '刷新今日额度' : '刷新 DSH 账号余额';
+  refresh.title = value?.refreshing ? '正在刷新…' : label;
+  refresh.setAttribute('aria-label', label);
+  refresh.setAttribute('aria-busy', String(value?.refreshing === true));
   element.dataset.source = value?.source || 'dsh';
   element.hidden = !value;
   if (!value) return;
@@ -107,5 +115,17 @@ function showAccount(value) {
   element.title = value.updated ? `更新于 ${new Date(value.updated).toLocaleTimeString()}` : '';
 }
 window.dragon.on('dsh:account', showAccount);
+document.querySelector('#account-refresh').onclick = async () => {
+  const button = document.querySelector('#account-refresh');
+  if (button.disabled) return;
+  const source = document.querySelector('#account-bubble').dataset.source;
+  button.disabled = true;
+  try { await window.dragon.invoke(source === 'sub2api' ? 'sub2api:quota-refresh' : 'dsh:account-refresh'); }
+  catch {
+    if (document.querySelector('#account-bubble').dataset.source === source) {
+      button.disabled = false; button.title = '刷新未成功，请点击重试';
+    }
+  }
+};
 
 

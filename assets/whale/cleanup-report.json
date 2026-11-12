@@ -1,6 +1,168 @@
 {
   "source": "https://github.com/gmskywalker/deepseek-fat-fish-codex-pet",
   "standard_rows": "0-8 replaced from source",
-  "look_rows": "9-10 preserved pixel-identically from previous atlas",
-  "output_sha256": "fc463219c7612bba51dd43855782441539eb84fefbe982be395dca9243336ac6"
+  "look_rows": "9-10 normalized to 184px visible height, centered, baseline 203",
+  "output_sha256": "003b0573154efa095aed4784b0df46fb8d735f125f9165386815439205521dca",
+  "look_normalization": [
+    {
+      "direction": 0,
+      "source_bounds": [
+        29,
+        5,
+        170,
+        203
+      ],
+      "scale": 0.9292929292929293
+    },
+    {
+      "direction": 1,
+      "source_bounds": [
+        47,
+        8,
+        165,
+        203
+      ],
+      "scale": 0.9435897435897436
+    },
+    {
+      "direction": 2,
+      "source_bounds": [
+        43,
+        9,
+        166,
+        203
+      ],
+      "scale": 0.9484536082474226
+    },
+    {
+      "direction": 3,
+      "source_bounds": [
+        42,
+        7,
+        165,
+        203
+      ],
+      "scale": 0.9387755102040817
+    },
+    {
+      "direction": 4,
+      "source_bounds": [
+        42,
+        7,
+        162,
+        203
+      ],
+      "scale": 0.9387755102040817
+    },
+    {
+      "direction": 5,
+      "source_bounds": [
+        41,
+        9,
+        163,
+        203
+      ],
+      "scale": 0.9484536082474226
+    },
+    {
+      "direction": 6,
+      "source_bounds": [
+        40,
+        19,
+        173,
+        203
+      ],
+      "scale": 1.0
+    },
+    {
+      "direction": 7,
+      "source_bounds": [
+        38,
+        29,
+        178,
+        203
+      ],
+      "scale": 1.0574712643678161
+    },
+    {
+      "direction": 8,
+      "source_bounds": [
+        37,
+        20,
+        165,
+        203
+      ],
+      "scale": 1.005464480874317
+    },
+    {
+      "direction": 9,
+      "source_bounds": [
+        46,
+        22,
+        169,
+        203
+      ],
+      "scale": 1.0165745856353592
+    },
+    {
+      "direction": 10,
+      "source_bounds": [
+        41,
+        21,
+        172,
+        203
+      ],
+      "scale": 1.010989010989011
+    },
+    {
+      "direction": 11,
+      "source_bounds": [
+        49,
+        19,
+        167,
+        203
+      ],
+      "scale": 1.0
+    },
+    {
+      "direction": 12,
+      "source_bounds": [
+        47,
+        18,
+        168,
+        203
+      ],
+      "scale": 0.9945945945945946
+    },
+    {
+      "direction": 13,
+      "source_bounds": [
+        51,
+        18,
+        169,
+        203
+      ],
+      "scale": 0.9945945945945946
+    },
+    {
+      "direction": 14,
+      "source_bounds": [
+        50,
+        20,
+        174,
+        203
+      ],
+      "scale": 1.005464480874317
+    },
+    {
+      "direction": 15,
+      "source_bounds": [
+        36,
+        20,
+        162,
+        203
+      ],
+      "scale": 1.005464480874317
+    }
+  ]
 }

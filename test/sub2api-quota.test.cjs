@@ -130,6 +130,24 @@ test('stopping from a successful notification cannot re-create the reset timer',
   const monitor = new Sub2apiQuota(value => { if (value?.updated) monitor.stop(); }, { ...time, fetch: async () => Response.json(sample()) });
   monitor.configure(provider); await flush(); assert.equal(time.timers.size, 0);
 });
+test('manual Sub2API refresh retries failures, preserves current data while busy and replaces its polling deadline', async () => {
+  const time = clock(), updates = [], pending = [];
+  const monitor = new Sub2apiQuota(value => updates.push(value), { ...time,
+    fetch: () => new Promise(resolve => pending.push(resolve)) });
+  monitor.configure(provider); pending[0](new Response('{}',{status:401})); await flush();
+  assert.ok(updates.at(-1).error);
+  const retry = monitor.refresh(); pending[1](Response.json(sample())); await retry;
+  await time.advance(5000);
+  const manual = monitor.refresh();
+  assert.equal(updates.at(-1).remaining, 121.9060417); assert.equal(updates.at(-1).refreshing, true);
+  assert.equal(monitor.timer, undefined); await monitor.refresh(); assert.equal(pending.length, 3);
+  pending[2](Response.json(sample())); await manual;
+  assert.equal(updates.at(-1).refreshing, undefined);
+  await time.advance(295000); assert.equal(pending.length, 3);
+  await time.advance(5000); assert.equal(pending.length, 4);
+  monitor.stop(); pending[3](Response.json(sample())); await flush();
+  assert.equal(time.timers.size, 0); assert.equal(updates.at(-1), null);
+});
 test('real loopback HTTP validates auth, handles errors, caps chunked bodies, forbids redirects and times out during body read', async t => {
   let redirectRequests = 0, auth;
   const server = http.createServer((req, res) => {

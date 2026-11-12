@@ -61,6 +61,7 @@ class Sub2apiQuota {
   constructor(publish, { fetch: request = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, timeoutMs = 15000 } = {}) {
     Object.assign(this, { publish, request, now, setTimer, clearTimer, timeoutMs, generation: 0, key: '' });
   }
+  emit(value) { this.snapshot = value; this.publish(value); }
   configure(provider, id = '') {
     const active = enabled(provider);
     const key = active ? JSON.stringify([id, provider.baseUrl, provider.apiKey]) : '';
@@ -69,7 +70,7 @@ class Sub2apiQuota {
     if (!active) return;
     const generation = this.generation;
     this.options = { url: usageUrl(provider.baseUrl), apiKey: provider.apiKey.trim(), generation };
-    this.publish({ source: 'sub2api', loading: true });
+    this.emit({ source: 'sub2api', loading: true });
     void this.refresh();
   }
   async refresh() {
@@ -78,6 +79,7 @@ class Sub2apiQuota {
     this.clearTimer(this.timer); this.timer = undefined;
     const controller = new AbortController();
     this.controller = controller; this.inFlight = true;
+    this.emit({ ...this.snapshot, refreshing: true });
     // One signal covers headers AND the bounded response stream.
     const timeout = this.setTimer(() => controller.abort(), this.timeoutMs);
     this.timeoutTimer = timeout;
@@ -89,11 +91,11 @@ class Sub2apiQuota {
       const value = project(await readJson(response), this.now());
       if (options.generation !== this.generation) return;
       this.clearTimer(this.resetTimer); this.resetTimer = undefined;
-      this.publish(value);
+      this.emit(value);
       if (value.resetAt && options.generation === this.generation) this.scheduleReset(value.resetAt, options.generation);
     } catch {
       if (options.generation === this.generation) {
-        this.publish({ source: 'sub2api', error: 'Sub2API 额度暂不可用' });
+        this.emit({ source: 'sub2api', error: 'Sub2API 额度暂不可用' });
       }
     } finally {
       this.clearTimer(timeout);
@@ -109,7 +111,7 @@ class Sub2apiQuota {
       if (generation !== this.generation) return;
       if (this.now() < resetAt) { this.scheduleReset(resetAt, generation); return; }
       this.resetTimer = undefined;
-      this.publish({ source: 'sub2api', loading: true });
+      this.emit({ source: 'sub2api', loading: true, refreshing: this.inFlight });
       if (this.inFlight) this.resetPending = true;
       else void this.refresh();
     }, Math.min(Math.max(1, resetAt - this.now()), 2147483647));
@@ -120,7 +122,7 @@ class Sub2apiQuota {
     this.clearTimer(this.timeoutTimer); this.timeoutTimer = undefined;
     this.timer = this.resetTimer = undefined;
     this.controller?.abort(); this.controller = null; this.inFlight = false; this.resetPending = false;
-    this.publish(null);
+    this.emit(null);
   }
 }
 module.exports = { usageUrl, enabled, project, Sub2apiQuota };

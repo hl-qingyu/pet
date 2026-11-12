@@ -9,7 +9,7 @@ async function renderer(model = 'deepseek-flash') {
   const config = structuredClone(defaults);
   config.chat.provider = 'custom'; config.providers.custom.model = model; config.pet.followMouse = false;
   function element(id) {
-    if (!elements.has(id)) elements.set(id, {style:{},dataset:{},events:{},classList:{add(){},remove(){}},
+    if (!elements.has(id)) elements.set(id, {style:{},dataset:{},events:{},classList:{add(){},remove(){},toggle(){}},
       addEventListener(name, fn) { this.events[name] = fn; }, setAttribute(){}});
     return elements.get(id);
   }

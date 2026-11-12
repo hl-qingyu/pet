@@ -59,6 +59,8 @@ function validate(config) {
     check(object(provider), `${id} 接口配置无效`);
     for (const key of ['label', 'baseUrl', 'apiKey', 'model']) text(provider[key], `${id}.${key}`);
     check(['responses', 'chat-completions'].includes(provider.protocol), `${id} 的 protocol 无效`);
+    if (provider.serviceSource !== undefined) check(['openai', 'sub2api', 'compatible'].includes(provider.serviceSource), `${id} 的服务来源无效`);
+    if (provider.showDailyQuota !== undefined) check(typeof provider.showDailyQuota === 'boolean', `${id}.showDailyQuota 必须是布尔值`);
     if (provider.reasoning !== undefined) {
       check(object(provider.reasoning), `${id}.reasoning 必须是对象`);
       check(['openai', 'deepseek'].includes(provider.reasoning.format), `${id} 的推理参数格式无效`);

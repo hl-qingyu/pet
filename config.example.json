@@ -39,6 +39,8 @@
     },
     "openai": {
       "label": "OpenAI / Codex 模型",
+      "serviceSource": "openai",
+      "showDailyQuota": false,
       "protocol": "responses",
       "baseUrl": "https://api.openai.com/v1",
       "apiKey": "",
@@ -48,6 +50,8 @@
     },
     "custom": {
       "label": "自定义兼容 API",
+      "serviceSource": "compatible",
+      "showDailyQuota": false,
       "protocol": "chat-completions",
       "baseUrl": "http://127.0.0.1:11434/v1",
       "apiKey": "",

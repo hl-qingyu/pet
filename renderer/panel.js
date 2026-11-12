@@ -94,9 +94,16 @@ function effortOptions(value = 'default') {
 }
 function providerFields(id) {
   selectedProvider = id; const p = config.providers[id];
+  $('#service-source').value = window.petProviderSource.source(p);
+  $('#sub2api-quota').checked = p.showDailyQuota === true;
   $('#protocol').value = p.protocol; $('#base-url').value = p.baseUrl; $('#api-key').value = p.apiKey; $('#model').value = p.model; $('#extra-body').value = JSON.stringify(p.extraBody,null,2);
   $('#reasoning-format').value = p.reasoning?.format || (id === 'deepseek' || new URL(p.baseUrl).hostname === 'api.deepseek.com' ? 'deepseek' : 'openai');
-  effortOptions(p.reasoning?.effort || 'default'); badge(); previewTheme();
+  effortOptions(p.reasoning?.effort || 'default'); sourceFields(); badge(); previewTheme();
+}
+function sourceFields() {
+  const selectable = window.petProviderSource.selectable({ baseUrl: $('#base-url').value }, selectedProvider);
+  $('#service-source-field').classList.toggle('hidden', !selectable);
+  $('#sub2api-quota-settings').classList.toggle('hidden', !selectable || $('#service-source').value !== 'sub2api');
 }
 function previewTheme() {
   const id = selectedProvider;
@@ -127,6 +134,8 @@ function retainProvider() {
   const provider = config.providers[selectedProvider];
   provider.protocol = $('#protocol').value; provider.baseUrl = $('#base-url').value.trim(); provider.model = $('#model').value.trim(); provider.apiKey = $('#api-key').value.trim();
   provider.reasoning = { format: $('#reasoning-format').value, effort: $('#reasoning-effort').value };
+  provider.serviceSource = $('#service-source').value;
+  provider.showDailyQuota = $('#sub2api-quota').checked;
   try { provider.extraBody = JSON.parse($('#extra-body').value || '{}'); } catch { throw new Error('附加请求参数不是有效 JSON。'); }
 }
 function fill(value) {
@@ -211,6 +220,8 @@ document.addEventListener('keyup', event => {
 }, true);
 window.addEventListener('blur', () => endShortcutRecording());
 $('#provider').onchange = () => { const target = $('#provider').value; try { retainProvider(); providerFields(target); dirty = true; } catch (error) { $('#provider').value = selectedProvider; notice(error.message,true); } };
+$('#service-source').onchange = () => { sourceFields(); dirty = true; };
+$('#base-url').addEventListener('input', sourceFields);
 $('#reasoning-format').onchange = () => { effortOptions($('#reasoning-effort').value); dirty = true; };
 for (const selector of ['#model', '#base-url']) $(selector).addEventListener('input', previewTheme);
 $('#pet-name').addEventListener('input', previewTheme);

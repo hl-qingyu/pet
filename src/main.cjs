@@ -9,6 +9,8 @@ const { streamReply, userError } = require('./backends/api.cjs');
 const { resolve: resolveTheme, character: getCharacter, integration: selectedIntegration } = require('../renderer/themes.js');
 const { PetState } = require('./pet-state.cjs');
 const { OpenaiStatus } = require('./backends/openai-status.cjs');
+const { source: providerSource } = require('../renderer/provider-source.js');
+const { Sub2apiQuota } = require('./backends/sub2api-quota.cjs');
 
 app.setName('DragonDesk');
 const appRoot = path.resolve(__dirname, '..');
@@ -31,7 +33,14 @@ let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dra
 let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' }, codexCli: { count: 0, degraded: false, message: '未开启' } };
 let appliedTheme;
 let accountSnapshot = null, accountEnabled = false;
-const dshAccount = new (require('./backends/dsh-account.cjs').DshAccount)(value => { accountSnapshot = value; broadcast('dsh:account', value); });
+let dshAccountSnapshot = null, sub2apiSnapshot = null;
+function publishAccount() {
+  const provider = store?.value.providers[store.value.chat.provider];
+  accountSnapshot = provider && providerSource(provider) === 'sub2api' ? sub2apiSnapshot : dshAccountSnapshot;
+  broadcast('dsh:account', accountSnapshot);
+}
+const dshAccount = new (require('./backends/dsh-account.cjs').DshAccount)(value => { dshAccountSnapshot = value && { ...value, source: 'dsh' }; publishAccount(); });
+const sub2apiQuota = new Sub2apiQuota(value => { sub2apiSnapshot = value; publishAccount(); });
 let shortcutRecording = false, shortcutRecordingRevision = 0, shortcutRecordingTimer;
 let dshObserver, openaiObserver, cliObserver, integrationStopping = Promise.resolve();
 const integrationSlots = new Map(), openaiStatus = new OpenaiStatus();
@@ -54,9 +63,12 @@ function applyIntegration() {
   const selected = selectedIntegration(store.value), integrations = store.value.integrations;
   const provider = store.value.providers[store.value.chat.provider];
   const hasApi = Boolean(provider?.apiKey?.trim() && provider?.baseUrl?.trim() && provider?.model?.trim());
-  const showAccount = selected === 'dsh' && hasApi && integrations.dsh.showAccount === true && !smoke;
+  const isSub2api = providerSource(provider) === 'sub2api';
+  const showAccount = !isSub2api && selected === 'dsh' && hasApi && integrations.dsh.showAccount === true && !smoke;
   const accountKey = JSON.stringify([showAccount, integrations.dsh.balanceWarning ?? 0]);
   if (accountKey !== accountEnabled) { accountEnabled = accountKey; dshAccount.configure(showAccount, integrations.dsh.balanceWarning ?? 0); }
+  sub2apiQuota.configure(provider, store.value.chat.provider);
+  publishAccount();
   const pending = [], stops = [];
   for (const id of ['dsh', 'openai', 'codexCli']) {
     const options = integrations[id], appropriate = (selected === 'dsh') === (id === 'dsh');
@@ -397,6 +409,7 @@ async function smokeTest() {
       while (Date.now() < end) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 40)); }
       throw new Error('UI smoke condition timed out');
     };
+    themeChecks.push(await require('./testing/sub2api-quota-smoke.cjs').smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel }));
     // Switching the selected model changes only the visible integration form;
     // both forms keep their independent, unsaved values until Save is pressed.
     const integrationForms = await panelWindow.webContents.executeJavaScript(`(() => {
@@ -731,5 +744,5 @@ if (ownLock) app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => { quitting = true; dshAccount.stop(); dshObserver?.stop(); openaiObserver?.stop(); cliObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
+app.on('before-quit', () => { quitting = true; dshAccount.stop(); sub2apiQuota.stop(); dshObserver?.stop(); openaiObserver?.stop(); cliObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
 app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); clearTimeout(shortcutRecordingTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

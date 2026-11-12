@@ -89,17 +89,21 @@ window.dragon.on('config:updated', configure);
 window.dragon.invoke('bootstrap').then(data => { configure(data.config); showAccount(data.account); state = data.state; sprite.dataset.loaded = 'true'; requestAnimationFrame(animate); }).catch(error => { window.__bootError = error.message; say(error.message); });
 
 function showAccount(value) {
-  if (value && !value.error && !value.loading) {
+  const sub2api = value?.source === 'sub2api';
+  if (sub2api) { accountDepleted = false; depletionFinished = false; }
+  else if (value && !value.error && !value.loading) {
     const depleted = value.depleted === true;
     if (depleted !== accountDepleted) { depletionFinished = false; frame = 0; next = 0; }
     accountDepleted = depleted;
   } else if (!value) { accountDepleted = false; depletionFinished = false; }
-  accountInsufficient = value?.insufficient === true;
+  accountInsufficient = !sub2api && value?.insufficient === true;
   const element = document.querySelector('#account-bubble');
   if (!element) return;
+  element.dataset.source = value?.source || 'dsh';
   element.hidden = !value;
   if (!value) return;
-  element.textContent = value.loading ? 'DSH 账号 · 正在读取…' : value.error || `余额 ${value.balance} · 消费 ${value.cost}`;
+  element.textContent = sub2api ? (value.loading ? 'Sub2API 额度读取中' : value.error || (value.unsupported ? '当前 Key 未提供日额度' : `今日余额 ${value.remaining.toFixed(2)} · 已用 ${value.used.toFixed(2)}`)) :
+    value.loading ? 'DSH 账号 · 正在读取…' : value.error || `余额 ${value.balance} · 消费 ${value.cost}`;
   element.title = value.updated ? `更新于 ${new Date(value.updated).toLocaleTimeString()}` : '';
 }
 window.dragon.on('dsh:account', showAccount);

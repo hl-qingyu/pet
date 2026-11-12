@@ -5,3 +5,4 @@
 #account-bubble{position:absolute;top:348px;left:8px;right:8px;z-index:2;padding:5px 8px;border:1px solid var(--line-strong);border-radius:12px;background:#fffefef5;color:var(--secondary);font-size:14px;line-height:1.55;white-space:pre-line;text-align:center;pointer-events:none}
 
 #bubble-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;line-break:strict}
+#account-bubble[data-source="sub2api"]{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

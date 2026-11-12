@@ -31,6 +31,8 @@
       <article class="card"><div class="card-heading"><span>02</span><h3>聊天接口</h3><span id="key-badge" class="badge">待配置</span></div>
         <div class="two"><label>接口配置<select id="provider"></select></label><label>协议<select id="protocol"><option value="chat-completions">Chat Completions</option><option value="responses">Responses（Codex / OpenAI）</option></select></label></div>
         <label>接口地址<input id="base-url" placeholder="https://api.deepseek.com"></label>
+        <label id="service-source-field">服务来源<select id="service-source"><option value="openai">OpenAI 官方</option><option value="sub2api">Sub2API 中转</option><option value="compatible">其他兼容 API</option></select></label>
+        <div id="sub2api-quota-settings" class="hidden"><label class="toggle"><span>下方显示今日额度</span><input id="sub2api-quota" type="checkbox"></label><p class="hint">使用当前接口地址与 API Key，每 5 分钟刷新，保存后生效。</p></div>
         <div class="two"><label>模型名称<input id="model" placeholder="填写平台支持的模型 ID"></label><label>API Key<input id="api-key" type="password" autocomplete="off" placeholder="填写你的接口密钥"></label></div>
         <p class="hint" id="theme-hint"></p>
         <div class="two"><label>推理参数格式<select id="reasoning-format"><option value="openai">OpenAI / Codex</option><option value="deepseek">DeepSeek</option></select></label><label>推理强度<select id="reasoning-effort"></select></label></div>
@@ -74,4 +76,4 @@
     </div>
   </section>
 </main><div id="confirm-clear" class="dialog-backdrop hidden"><div class="dialog"><h3>清空这段聊天？</h3><p>会清除本机记录和后续聊天上下文。</p><div><button id="cancel-clear">保留</button><button id="confirm-clear-button" class="primary">清空</button></div></div></div>
-<script src="themes.js"></script><script src="shortcuts.js"></script><script src="panel.js"></script></body></html>
+<script src="themes.js"></script><script src="provider-source.js"></script><script src="shortcuts.js"></script><script src="panel.js"></script></body></html>

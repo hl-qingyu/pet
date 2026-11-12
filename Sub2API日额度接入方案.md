@@ -1,6 +1,6 @@
 # Sub2API 日额度气泡接入方案
 
-> 2026-11-12：设计方案，尚未实现。用于确定下方气泡、接口来源配置、查询条件与验收范围。
+> 2026-11-12：已按本方案实现。保留设计约定，字段及验证入口见文末“实现记录”。
 
 ## 目标与范围
 
@@ -174,7 +174,7 @@ Accept: application/json
 
 ## 实施与交付
 
-本文件只记录设计，不启用功能、不修改本机配置、不发起额外额度查询。
+默认配置保持关闭。真实接口验收及本机开关启用须经用户确认，配置与密钥只保存在本机，不纳入代码或发布产物。
 
 实际实现后，按 `AGENTS.md` 执行测试并使用 `npm run build:win` 更新原目录 `dist/win-unpacked`。保留原配置路径，通过工作区原启动入口正常显示窗口并验证，不交付临时目录中的成品作为替代入口。
 
@@ -186,3 +186,10 @@ Accept: application/json
 - [Sub2API 额度和用量响应实现](https://github.com/Wei-Shaw/sub2api/blob/main/backend/internal/handler/gateway_handler.go)
 
 参考源码可能随上游更新；实现以目标中转站的实际响应和当时验证过的版本为准。
+
+## 实现记录
+
+- 每套接口使用 `providers.<id>.serviceSource`（`openai` / `sub2api` / `compatible`）及 `showDailyQuota`。未设置来源时仅识别官方 OpenAI 地址，其余按兼容 API 处理；未设置开关时关闭。
+- `src/backends/sub2api-quota.cjs` 负责日窗口投影、15 秒请求超时、64 KiB 流式读取上限、5 分钟轮询、服务端窗口重置刷新、取消与请求代际校验；广播复用原下方气泡通道，带 `source` 区分数据类型。
+- `test/sub2api-quota.test.cjs` 覆盖字段、地址、切换、取消、过期、并发、超时、认证失败、重定向及读取上限；`src/testing/sub2api-quota-smoke.cjs` 通过真实 Electron 设置页、IPC、本地模拟 HTTP 与气泡检查草稿隔离、保存生效和动画隔离。
+- 源码与 Windows 成品分别通过 `npm run test:ui`、`npm run test:packaged` 验证，截图及模拟验收报告保存在本机忽略目录 `work/ui-smoke/data/`。现场只读查询使用用户授权的当前配置，验证结果单独保存在本机 `work/sub2api-verification/`，不以模拟数据替代，不记录密钥或原始响应。

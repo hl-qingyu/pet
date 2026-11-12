@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, globalShortcut, screen, shell, dialog, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, globalShortcut, screen, shell, dialog, powerMonitor, crashReporter } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -26,8 +26,21 @@ app.setPath('sessionData', path.join(dataRoot, 'electron'));
 app.setAppLogsPath(path.join(dataRoot, 'logs'));
 const ownLock = app.requestSingleInstanceLock();
 if (!ownLock) app.quit();
+const diagnostics = ownLock ? require('./runtime-diagnostics.cjs').createDiagnostics(path.join(dataRoot, 'logs'), app.getVersion()) : null;
+if (ownLock) {
+  const crashes = path.join(dataRoot, 'crashes');
+  try {
+    fs.mkdirSync(crashes, { recursive: true }); app.setPath('crashDumps', crashes);
+    crashReporter.start({ productName: 'DragonDesk', uploadToServer: false });
+  } catch (error) { log(`Crash diagnostics unavailable: ${error.message}`); }
+  process.on('uncaughtExceptionMonitor', (error, origin) => diagnostics.error(error, origin,
+    Object.values(store?.value.providers || {}).map(provider => provider.apiKey)));
+  process.on('exit', code => diagnostics.exit(code));
+  app.on('child-process-gone', (_event, details) => log(`Child process stopped: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`));
+  app.on('will-quit', () => log('Application will-quit'));
+}
 
-let petWindow, panelWindow, tray, store, history, request, unwatch, currentShortcut = '', cursorTimer;
+let petWindow, panelWindow, tray, store, history, request, unwatch, disposePetRecovery, currentShortcut = '', cursorTimer;
 let panelReady = false, panelPending = false, panelCrashed = false;
 let quitting = false, currentState = 'idle', panelPage = 'chat', dragOrigin, dragLastCursorX = 0, positionTimer, idleTimer;
 let runtime = { shortcut: '', shortcutRecording: false, shortcutRecordingRevision: 0, startup: '', error: '', dsh: { count: 0, degraded: false, message: '未开启' }, openai: { count: 0, degraded: false, message: '未开启' }, codexCli: { count: 0, degraded: false, message: '未开启' } };
@@ -48,7 +61,7 @@ let dshSnapshot = { state: 'idle' };
 const petState = new PetState(payload => { currentState = payload.state; broadcast('pet:state', payload); }, () => Boolean(request));
 
 function log(message) {
-  fs.appendFileSync(path.join(dataRoot, 'logs', 'app.log'), `${new Date().toISOString()} ${message}\n`);
+  diagnostics?.log(message);
 }
 function send(window, channel, value) { if (window && !window.isDestroyed() && !window.webContents.isLoading()) window.webContents.send(channel, value); }
 function broadcast(channel, value) { send(petWindow, channel, value); send(panelWindow, channel, value); }
@@ -269,7 +282,7 @@ function contextMenu() {
     { label: '设置与性格', click: () => showPanel('settings') },
     { label: '重新放到主屏幕', click: () => { const point = clampPoint(null, petSize()); petWindow.setPosition(point.x, point.y); persistPosition(); showPet(); } },
     { type: 'separator' },
-    { label: '退出 DragonDesk', click: () => { quitting = true; app.quit(); } },
+    { label: '退出 DragonDesk', click: () => { log('Exit requested from menu'); quitting = true; app.quit(); } },
   ]);
 }
 function persistPosition() {
@@ -356,7 +369,7 @@ function secureWindow(window) {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
-  window.webContents.on('render-process-gone', (_event, details) => { log(`Renderer stopped: ${details.reason}`); });
+  window.webContents.on('render-process-gone', (_event, details) => { log(`Renderer stopped: window=${window === petWindow ? 'pet' : 'panel'} reason=${details.reason} exitCode=${details.exitCode}`); });
   window.webContents.on('console-message', details => { if (details.level === 'error') log(`Renderer: ${String(details.message).slice(0, 600)}`); });
   window.on('unresponsive', () => log('Window unresponsive'));
 }
@@ -366,6 +379,8 @@ function createWindows() {
   petWindow = new BrowserWindow({ ...size, ...point, title: 'DragonDesk · 桌宠', frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, maximizable: false, minimizable: false, hasShadow: false, skipTaskbar: true, show: false, webPreferences });
   panelWindow = new BrowserWindow({ width: 940, height: 740, minWidth: 760, minHeight: 580, title: 'DragonDesk · 聊天与设置', backgroundColor: '#f8f7fc', show: false, autoHideMenuBar: true, icon: path.join(appRoot, 'assets/icon.png'), webPreferences: { ...webPreferences, backgroundThrottling: false } });
   for (const window of [petWindow, panelWindow]) secureWindow(window);
+  disposePetRecovery = require('./pet-recovery.cjs').attachPetRecovery(petWindow, { isQuitting: () => quitting, log,
+    onCrash: () => { dragOrigin = null; petWindow.setIgnoreMouseEvents(false); }, onRecovered: restorePetLevel });
   if (process.platform === 'darwin') petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   panelWindow.webContents.on('did-start-loading', () => { panelReady = false; });
   panelWindow.webContents.on('render-process-gone', () => {
@@ -702,6 +717,8 @@ async function smokeTest() {
     // native focus/hover events cannot interfere with the synthetic look input.
     themeChecks.push(await require('./testing/shortcut-smoke.cjs').smokeShortcutRecording({ panelWindow, petWindow, store, globalShortcut,
       showPanel, waitFor, getRecording: () => shortcutRecording, getCurrentShortcut: () => currentShortcut, dataRoot }));
+    themeChecks.push(await require('./testing/recovery-smoke.cjs').smokePetRecovery({ petWindow, panelWindow, store, showPet,
+      waitFor, getState: () => currentState }));
   }
   showPanel('settings');
   await panelWindow.webContents.executeJavaScript('document.querySelector(".settings-body").scrollTop=document.querySelectorAll(".card")[1].offsetTop-120;');
@@ -744,5 +761,5 @@ if (ownLock) app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => { quitting = true; dshAccount.stop(); sub2apiQuota.stop(); dshObserver?.stop(); openaiObserver?.stop(); cliObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
+app.on('before-quit', () => { diagnostics?.quitting(); quitting = true; disposePetRecovery?.(); dshAccount.stop(); sub2apiQuota.stop(); dshObserver?.stop(); openaiObserver?.stop(); cliObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
 app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); clearTimeout(shortcutRecordingTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

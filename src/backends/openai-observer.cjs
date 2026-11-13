@@ -241,16 +241,35 @@ class OpenaiObserver {
     });
   }
   fault(partial) {
-    this.warning = '状态读取降级：布局、版本或资源超限';
+    const warning = '状态读取降级：布局、版本或资源超限';
     const p = partial?.params, session = p && this.sessions.get(`${p.hostId}:${p.conversationId}`);
-    if (session) { session.summary = null; session.state = 'idle'; session.blocked = true; if (session.owner) this.following(session, false); }
-    else for (const session of this.sessions.values()) { session.summary = null; session.state = 'idle'; session.blocked = true; if (session.owner) this.following(session, false); }
+    if (session) this.block(session, warning);
+    else if (this.sessions.size) for (const session of this.sessions.values()) this.block(session, warning);
+    else this.warning = warning;
     this.publish();
   }
-  discover(params) {
+  block(session, warning) {
+    session.summary = null; session.state = 'idle'; session.blocked = true;
+    session.snapshotAt = session.refreshAt = null; session.warning = warning;
+    session.failures = Math.min((session.failures || 0) + 1, 5);
+    session.retryAt = this.now() + Math.min(5000 * 2 ** (session.failures - 1), 60000);
+    if (session.owner) this.following(session, false);
+  }
+  queueOwner(key, session) {
+    if (this.pending?.key === key || this.queue.includes(key)) return;
+    if (session.blocked && this.now() < session.retryAt) return;
+    if (!session.blocked && session.owner && this.now() < session.ownerCheckAt) return;
+    session.ownerCheckAt = this.now() + 5000;
+    this.queue.push(key); this.pump();
+  }
+  discover(params, sourceClientId) {
     if (!safeId(params?.conversationId) || !safeId(params.hostId)) return;
     const key = `${params.hostId}:${params.conversationId}`;
-    if (this.sessions.has(key)) return;
+    const existing = this.sessions.get(key);
+    if (existing) {
+      if (existing.blocked || (existing.owner && safeId(sourceClientId) && existing.owner !== sourceClientId)) this.queueOwner(key, existing);
+      return;
+    }
     if (this.sessions.size >= LIMITS.sessions) {
       this.warning = '会话数量超过资源上限，优先近期会话';
       const oldest = [...this.sessions.entries()].filter(([key, item]) => item.owner &&
@@ -281,21 +300,30 @@ class OpenaiObserver {
       } else if (message.requestId === this.pending?.requestId) {
         const session = this.sessions.get(this.pending.key); this.pending = null;
         if (session && message.resultType === 'success' && safeId(message.handledByClientId)) {
+          if (session.blocked || session.owner !== message.handledByClientId) {
+            if (session.owner && session.owner !== message.handledByClientId) this.following(session, false);
+            session.revision = -1; session.summary = null; session.state = 'idle';
+            session.blocked = false; session.refreshAt = null; session.refreshes = 0;
+            session.resyncCount = 0; session.resyncSince = null;
+          }
           session.owner = message.handledByClientId; session.snapshotAt = this.now(); this.following(session, true);
-        } else if (session) this.sessions.delete(`${session.hostId}:${session.id}`);
+        } else if (session) this.block(session, '会话归属暂不可用，正在重试');
         this.pump();
       }
       return;
     }
     if (message.type !== 'broadcast' || message.sourceClientId === this.clientId) return;
-    if (message.method === 'thread-stream-following-changed' && message.params?.following) { this.discover(message.params); return; }
+    if (message.method === 'thread-stream-following-changed' && message.params?.following) { this.discover(message.params, message.sourceClientId); return; }
     if (message.method === 'client-status-changed' && message.params?.status === 'disconnected') {
       for (const [key, session] of this.sessions) if (session.owner === message.params.clientId) this.sessions.delete(key);
       this.publish(); return;
     }
     if (message.method !== 'thread-stream-state-changed') return;
     const p = message.params, session = p && this.sessions.get(`${p.hostId}:${p.conversationId}`);
-    if (!session || session.blocked || session.owner !== message.sourceClientId) return;
+    if (!session || session.blocked || session.owner !== message.sourceClientId) {
+      if (safeId(message.sourceClientId)) this.discover(p, message.sourceClientId);
+      return;
+    }
     if (message.version !== 11) { this.fault(message); return; }
     try {
       const change = p.change;
@@ -322,6 +350,7 @@ class OpenaiObserver {
       if (session.state !== previous) session.at = ['review', 'failed'].includes(session.state) && session.summary.runtime?.type !== 'systemError' && change.type === 'snapshot' && completedAt ? Math.min(completedAt, now) : now;
       if (['running', 'waiting'].includes(session.state)) session.at = now;
       session.revision = change.revision; session.snapshotAt = null; session.refreshAt = null; session.refreshes = 0;
+      session.warning = ''; session.failures = 0; session.retryAt = null;
       this.publish();
     } catch { this.resnapshot(session); }
   }
@@ -344,17 +373,26 @@ class OpenaiObserver {
     if (this.socket && this.frames?.startedAt != null && now - this.frames.startedAt >= LIMITS.timeout) {
       this.warning = '状态数据接收超时'; this.socket.destroy();
     }
-    if (this.pending && now >= this.pending.deadline) { this.sessions.delete(this.pending.key); this.pending = null; this.pump(); }
+    if (this.pending && now >= this.pending.deadline) {
+      const session = this.sessions.get(this.pending.key); this.pending = null;
+      if (session) this.block(session, '会话归属查询超时，正在重试');
+      this.pump();
+    }
+    let retried = false;
     for (const session of this.sessions.values()) {
+      if (session.blocked && now >= session.retryAt && !retried) {
+        this.queueOwner(`${session.hostId}:${session.id}`, session); retried = true;
+      }
       if (session.refreshAt && now >= session.refreshAt) { session.refreshAt = null; session.snapshotAt = now; this.following(session, true); }
       if (session.snapshotAt && now - session.snapshotAt >= LIMITS.timeout) {
-        session.blocked = true; session.summary = null; session.state = 'idle'; this.following(session, false); this.warning = '状态快照读取失败'; session.snapshotAt = null;
+        this.block(session, '状态快照读取失败，正在重试');
       }
     }
     this.publish();
   }
   snapshot() {
     let state = 'idle', at = 0;
+    const warning = this.warning || [...this.sessions.values()].find(session => session.warning)?.warning;
     const sessions = [];
     for (const session of this.sessions.values()) {
       if (!matchesWorkspace(session, this.options.workspace)) continue;
@@ -375,7 +413,7 @@ class OpenaiObserver {
     }
     const count = [...this.sessions.values()].filter(session => session.owner && !session.blocked && matchesWorkspace(session, this.options.workspace)).length;
     return { state, bubble: this.options.showBubble ? WORDS[state] : undefined, sessions,
-      info: { count, connected: this.ready, degraded: Boolean(this.warning), message: this.warning || (!this.ready ? '等待 ChatGPT 桌面端连接……' : count ? `已连接，正在监听 ${count} 个 OpenAI 会话` : this.options.workspace ? '已连接，等待匹配工作区的本机会话……' : '已连接，等待桌面端会话……') } };
+      info: { count, connected: this.ready, degraded: Boolean(warning), message: warning || (!this.ready ? '等待 ChatGPT 桌面端连接……' : count ? `已连接，正在监听 ${count} 个 OpenAI 会话` : this.options.workspace ? '已连接，等待匹配工作区的本机会话……' : '已连接，等待桌面端会话……') } };
   }
   publish() {
     if (!this.active) return;

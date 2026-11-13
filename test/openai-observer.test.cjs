@@ -27,7 +27,7 @@ const reply = (id, indices, extra = {}) => ({ type: 'userMessage', id: 'reply-' 
   text: '<send_user_message_question_reply>' + JSON.stringify(indices.map(index => ({
     questionItemId: JSON.stringify(['request_user_input_async', id, index]), question: 'PRIVATE_QUESTION', answer: 'PRIVATE_ANSWER🐉',
   }))) + '</send_user_message_question_reply>' }], ...extra });
-async function fixture(t, initial = state(), options = {}, hostId = 'local') {
+async function fixture(t, initial = state(), options = {}, hostId = 'local', behavior = {}) {
   let now = Date.now(), socket, incoming = Buffer.alloc(0), revision = 0;
   const sent = [], updates = [], id = 'conversation-a';
   const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\dragon-openai-test-${randomUUID()}` : path.join(os.tmpdir(), `dragon-${randomUUID()}.sock`);
@@ -40,15 +40,15 @@ async function fixture(t, initial = state(), options = {}, hostId = 'local') {
         if (message.method === 'initialize') {
           send({ type: 'response', method: 'initialize', requestId: message.requestId, resultType: 'success', result: { clientId: 'observer-id' } }); announce();
         } else if (message.method === 'thread-owner-discovery') {
-          send({ type: 'response', method: message.method, requestId: message.requestId, resultType: 'success', handledByClientId: 'owner-id', result: {} });
-        } else if (message.method === 'thread-stream-following-changed' && message.params.following) snapshot();
+          send({ type: 'response', method: message.method, requestId: message.requestId, resultType: 'success', handledByClientId: behavior.owner || 'owner-id', result: {} });
+        } else if (message.method === 'thread-stream-following-changed' && message.params.following && !behavior.dropSnapshot) snapshot();
       }
     });
   });
   function send(value) { if (socket?.writable) socket.write(encode(value)); }
   function announce(conversationId = id) { send({ type: 'broadcast', method: 'thread-stream-following-changed', sourceClientId: 'owner-id', version: 1, params: { hostId, conversationId, following: true } }); }
-  function snapshot() { send({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'owner-id', version: 11,
-    params: { hostId, conversationId: id, change: { type: 'snapshot', revision, conversationState: initial } } }); }
+  function snapshot() { send({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: behavior.owner || 'owner-id', version: 11,
+    params: { hostId, conversationId: id, change: { type: 'snapshot', revision: behavior.revision ?? revision, conversationState: initial } } }); }
   function patches(values, base = revision) { send({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'owner-id', version: 11,
     params: { hostId, conversationId: id, change: { type: 'patches', baseRevision: base, revision: ++revision, patches: values } } }); }
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(endpoint, resolve); });
@@ -239,6 +239,91 @@ test('unsupported versions unsubscribe and degrade without revealing payloads', 
   f.send({ type: 'broadcast', method: 'thread-stream-state-changed', version: 999, sourceClientId: 'owner-id', params: { hostId: 'local', conversationId: 'conversation-a', change: { type: 'snapshot', revision: 1, conversationState: { PRIVATE: 'PRIVATE' } } } });
   await until(() => f.observer.snapshot().info.degraded); assert.equal(f.observer.snapshot().state, 'idle');
   await until(() => f.sent.some(message => message.params?.following === false)); assert.ok(!JSON.stringify(f.updates).includes('PRIVATE'));
+});
+
+test('a temporarily missing first snapshot retries and can receive the next running turn', async t => {
+  const behavior = { dropSnapshot: true };
+  const f = await fixture(t, state(), {}, 'local', behavior);
+  f.observer.start(); await until(() => [...f.observer.sessions.values()][0]?.snapshotAt);
+  f.advance(LIMITS.timeout + 1);
+  const session = [...f.observer.sessions.values()][0];
+  assert.equal(f.observer.snapshot().state, 'idle'); assert.equal(session.blocked, true);
+  await until(() => f.sent.some(message => message.params?.following === false));
+  const before = f.sent.length;
+  f.advance(1000); await delay(20); assert.equal(f.sent.length, before, '重试应有冷却间隔');
+  behavior.dropSnapshot = false;
+  f.advance(60000); await until(() => f.observer.snapshot().state === 'running');
+  assert.equal(session.blocked, false); assert.equal(f.observer.snapshot().info.degraded, false);
+});
+
+test('a state announcement can discover a task even when its following announcement was missed', async t => {
+  const f = await fixture(t); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
+  f.observer.sessions.clear();
+  f.snapshot();
+  await until(() => f.observer.snapshot().state === 'running');
+  assert.equal(f.observer.sessions.size, 1);
+  assert.equal(f.sent.filter(message => message.method === 'thread-owner-discovery').length, 2);
+});
+
+test('a desktop owner change revalidates ownership and accepts the new revision sequence', async t => {
+  const behavior = {};
+  const f = await fixture(t, state(), {}, 'local', behavior);
+  f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
+  f.patches([{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle' } },
+    { op: 'replace', path: ['turns', 0, 'status'], value: 'completed' }]);
+  await until(() => f.observer.snapshot().state === 'review'); f.advance(4001);
+  behavior.owner = 'replacement-owner'; behavior.revision = 0;
+  f.snapshot();
+  await until(() => f.observer.sessions.get('local:conversation-a').owner === behavior.owner);
+  await until(() => f.observer.snapshot().state === 'running');
+  assert.equal(f.observer.sessions.get('local:conversation-a').revision, 0);
+});
+
+test('unsupported snapshots retry with bounded backoff and recover without restarting other sessions', async t => {
+  const behavior = {};
+  const f = await fixture(t, state(), {}, 'local', behavior);
+  f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
+  const session = f.observer.sessions.get('local:conversation-a');
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    f.send({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'owner-id', version: 999,
+      params: { hostId: 'local', conversationId: 'conversation-a' } });
+    await until(() => session.blocked);
+    assert.equal(f.observer.snapshot().state, 'idle');
+    const retryAt = session.retryAt;
+    f.announce(); f.announce(); await delay(10);
+    assert.equal(session.blocked, true); assert.equal(session.retryAt, retryAt);
+    f.advance(60000); await until(() => f.observer.snapshot().state === 'running');
+    assert.equal(f.observer.snapshot().info.degraded, false);
+  }
+  assert.ok(!JSON.stringify(f.updates).includes('PRIVATE'));
+});
+
+test('a snapshot from an unverified replacement owner cannot change current activity', async t => {
+  const f = await fixture(t); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');
+  f.send({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'unverified-owner', version: 11,
+    params: { hostId: 'local', conversationId: 'conversation-a', change: { type: 'snapshot', revision: 10000,
+      conversationState: { ...state(), threadRuntimeStatus: { type: 'systemError' } } } } });
+  await until(() => f.sent.filter(message => message.method === 'thread-owner-discovery').length === 2);
+  await delay(20);
+  assert.equal(f.observer.snapshot().state, 'running');
+  assert.equal(f.observer.sessions.get('local:conversation-a').owner, 'owner-id');
+});
+
+test('repeated missing snapshots back off instead of creating a request loop', async t => {
+  const behavior = { dropSnapshot: true };
+  const f = await fixture(t, state(), {}, 'local', behavior);
+  f.observer.start(); await until(() => [...f.observer.sessions.values()][0]?.snapshotAt);
+  const session = [...f.observer.sessions.values()][0];
+  for (const delayMs of [5000, 10000, 20000]) {
+    f.advance(LIMITS.timeout + 1); await until(() => session.blocked);
+    await until(() => f.sent.filter(message => message.params?.following === false).length === session.failures);
+    const before = f.sent.length;
+    f.advance(delayMs - 1); await delay(10); assert.equal(f.sent.length, before);
+    f.advance(1); await until(() => session.snapshotAt && !session.blocked);
+  }
+  behavior.dropSnapshot = false;
+  f.snapshot(); await until(() => f.observer.snapshot().state === 'running');
+  assert.equal(session.failures, 0);
 });
 test('discovery stays bounded; disconnect clears running state', async t => {
   const f = await fixture(t); f.observer.start(); await until(() => f.observer.snapshot().state === 'running');

@@ -102,7 +102,7 @@ window.dragon.on('pet:state', payload => {
 window.dragon.on('pet:drag-direction', name => { if (drag) choose(name); });
 window.dragon.on('pet:cursor', point => { const s = config?.pet.scale || 1, dx = point.x/s-145, dy = point.y/s-210; direction = Math.round(((Math.atan2(dx,-dy)*180/Math.PI+360)%360)/22.5)%16; });
 window.dragon.on('config:updated', configure);
-window.dragon.invoke('bootstrap').then(data => { configure(data.config); showAccount(data.account); state = data.state; sprite.dataset.loaded = 'true'; requestAnimationFrame(animate); }).catch(error => { window.__bootError = error.message; say(error.message); });
+window.dragon.invoke('bootstrap').then(data => { configure(data.config); showAccount(data.account); state = data.state; sprite.dataset.loaded = 'true'; requestAnimationFrame(animate); window.dragon.send('pet:ready'); }).catch(error => { window.__bootError = error.message; say(error.message); });
 
 function showAccount(value) {
   const sub2api = value?.source === 'sub2api';

@@ -65,6 +65,11 @@ function log(message) {
 }
 function send(window, channel, value) { if (window && !window.isDestroyed() && !window.webContents.isLoading()) window.webContents.send(channel, value); }
 function broadcast(channel, value) { send(petWindow, channel, value); send(panelWindow, channel, value); }
+function syncPet() {
+  send(petWindow, 'config:updated', store.value);
+  send(petWindow, 'dsh:account', accountSnapshot);
+  petState.refresh(true);
+}
 function status(state, bubble, resetMs = 0) { petState.local(state, bubble, resetMs); }
 function refreshExternal() {
   const combined = openaiStatus.snapshot();
@@ -111,6 +116,11 @@ function applyIntegration() {
       require('./backends/openai-observer.cjs').OpenaiObserver : require('./backends/codex-cli-observer.cjs').CodexCliObserver;
     const observer = new Observer(options, snapshot => {
       if (quitting || integrationSlots.get(id) !== slot) return;
+      const diagnostic = JSON.stringify([snapshot.state, snapshot.info.count, snapshot.info.degraded === true]);
+      if (slot.diagnostic !== diagnostic) {
+        slot.diagnostic = diagnostic;
+        log(`Integration update: source=${id} state=${snapshot.state} count=${snapshot.info.count} degraded=${snapshot.info.degraded === true}`);
+      }
       const before = JSON.stringify([runtime[id], runtime.openaiSummary]);
       runtime[id] = snapshot.info;
       if (id === 'dsh') dshSnapshot = snapshot; else openaiStatus.update(id, snapshot);
@@ -299,6 +309,7 @@ function guard(event) {
 }
 function handle(channel, callback) { ipcMain.handle(channel, async (event, ...args) => { guard(event); return callback(...args); }); }
 function on(channel, callback) { ipcMain.on(channel, (event, ...args) => { guard(event); callback(...args); }); }
+function bootstrap() { return { config: store.value, configPath, runtime, account: accountSnapshot, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request), platform: process.platform }; }
 
 function setupIPC() {
   handle('sub2api:quota-refresh', () => {
@@ -309,7 +320,7 @@ function setupIPC() {
     const provider = store.value.providers[store.value.chat.provider];
     if (providerSource(provider) !== 'sub2api' && accountSnapshot?.source === 'dsh') return dshAccount.refresh();
   });
-  handle('bootstrap', () => ({ config: store.value, configPath, runtime, account: accountSnapshot, messages: history.messages, state: currentState, page: panelPage, busy: Boolean(request), platform: process.platform }));
+  handle('bootstrap', bootstrap);
   handle('shortcut:recording', active => setShortcutRecording(active));
   handle('config:save', next => {
     if (request) throw new Error('请先停止当前回复，再修改接口或性格。');
@@ -346,6 +357,7 @@ function setupIPC() {
   });
   handle('chat:stop', () => request?.controller.abort(new Error('已停止生成。')));
   on('panel:open', page => showPanel(page === 'settings' ? 'settings' : 'chat'));
+  on('pet:ready', syncPet);
   on('panel:ready', () => {
     panelReady = true;
     send(panelWindow, 'panel:page', panelPage);
@@ -387,6 +399,9 @@ function createWindows() {
   petWindow = new BrowserWindow({ ...size, ...point, title: 'DragonDesk · 桌宠', frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, maximizable: false, minimizable: false, hasShadow: false, skipTaskbar: true, show: false, webPreferences });
   panelWindow = new BrowserWindow({ width: 940, height: 740, minWidth: 760, minHeight: 580, title: 'DragonDesk · 聊天与设置', backgroundColor: '#f8f7fc', show: false, autoHideMenuBar: true, icon: path.join(appRoot, 'assets/icon.png'), webPreferences: { ...webPreferences, backgroundThrottling: false } });
   for (const window of [petWindow, panelWindow]) secureWindow(window);
+  // Updates arriving after bootstrap but before load finishes were skipped by
+  // send(). Replay the current view even when the observer state has not changed.
+  petWindow.webContents.on('did-finish-load', syncPet);
   disposePetRecovery = require('./pet-recovery.cjs').attachPetRecovery(petWindow, { isQuitting: () => quitting, log,
     onCrash: () => { dragOrigin = null; petWindow.setIgnoreMouseEvents(false); }, onRecovered: restorePetLevel });
   if (process.platform === 'darwin') petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -433,6 +448,8 @@ async function smokeTest() {
       throw new Error('UI smoke condition timed out');
     };
     themeChecks.push(await require('./testing/sub2api-quota-smoke.cjs').smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel, dshAccount }));
+    themeChecks.push(await require('./testing/state-delivery-smoke.cjs').smokeStateDelivery({ petWindow, petState, waitFor, bootstrap,
+      setBootstrap: callback => { ipcMain.removeHandler('bootstrap'); handle('bootstrap', callback); } }));
     // Switching the selected model changes only the visible integration form;
     // both forms keep their independent, unsaved values until Save is pressed.
     const integrationForms = await panelWindow.webContents.executeJavaScript(`(() => {

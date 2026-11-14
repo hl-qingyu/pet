@@ -9,7 +9,8 @@ function cell(r,c) {
   const mirror = theme === 'whale' && r === 1;
   const shownRow = mirror ? 2 : r;
   sprite.style.backgroundPosition = `${-c*192}px ${-shownRow*208}px`;
-  art.style.transform = `translateX(${window.petMotion.offset(theme,shownRow,c)}px)${mirror ? ' scaleX(-1)' : ''}`;
+  const scale = window.petMotion.scale(theme,shownRow,c);
+  art.style.transform = `translateX(${window.petMotion.offset(theme,shownRow,c)}px)${mirror ? ' scaleX(-1)' : ''}${scale === 1 ? '' : ` scale(${scale})`}`;
 }
 function choose(name) {
   const theme = document.documentElement.dataset.theme;

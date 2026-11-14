@@ -6,14 +6,19 @@
     2: [120,120,120,120,120,120,120,120],
     5: [200,160,160,160,160,160,200,360],
     6: [200,180,180,220,240,360],
-    7: [150,150,170,180,150,220],
+    7: [260,240,260,280,240,340],
     8: [100,100,100,100,100,100],
   };
+  // 工作动画的源帧缩放不一致，按桌子宽度逐帧校正，避免播放时忽大忽小。
+  const whaleScales = { 7: [1, 1, 0.97, 0.949, 1, 0.956] };
   function offset(theme, row, frame) {
     return 0;
   }
+  function scale(theme, row, frame) {
+    return (theme === 'whale' && whaleScales[row] && whaleScales[row][frame]) || 1;
+  }
   function durations(theme, row) { return (theme === 'whale' && whaleTimings[row]) || timings[row]; }
-  const api = { offset, durations };
+  const api = { offset, durations, scale };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.petMotion = api;
 })(globalThis);

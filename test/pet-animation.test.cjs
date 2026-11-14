@@ -74,14 +74,15 @@ test('dragon keeps its separate running rows and original loop timing', async ()
   }
 });
 
-test('working whale holds frames longer while visual registration leaves the pointer target still', async () => {
+test('working whale holds frames longer and applies per-frame scale correction without moving the pointer target', async () => {
   const app=await renderer();app.state('running');
   assert.equal(app.tick(0),'0px -1456px');
   assert.equal(app.tick(120),'0px -1456px');
-  assert.equal(app.tick(149),'0px -1456px');
-  assert.equal(app.tick(150),'-192px -1456px');
-  const first=app.art.style.transform;app.tick(520);
-  assert.equal(app.art.style.transform,first);
+  assert.equal(app.tick(259),'0px -1456px');
+  assert.equal(app.tick(260),'-192px -1456px');
+  assert.equal(app.art.style.transform,'translateX(0px)');
+  assert.equal(app.tick(520),'-384px -1456px');
+  assert.equal(app.art.style.transform,'translateX(0px) scale(0.97)');
   assert.equal(app.sprite.style.transform,undefined,'visual correction must not move the hover/drag target');
 });
 

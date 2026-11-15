@@ -1,5 +1,5 @@
 const { officialOpenai, source } = require('../../renderer/provider-source.js');
-const REFRESH_MS = 300000, MAX_BYTES = 65536;
+const REFRESH_MS = 300000, MAX_BYTES = 65536, DAY_MS = 86400000;
 
 function usageUrl(baseUrl) {
   const url = new URL(baseUrl);
@@ -37,8 +37,18 @@ function project(data, now = Date.now()) {
   if (!windows.length) return { source: 'sub2api', unsupported: true };
   if (windows.length !== 1) throw new Error('ambiguous');
   const daily = windows[0], remaining = amount(daily.remaining), used = amount(daily.used);
-  const windowStart = timestamp(daily.window_start), resetAt = timestamp(daily.reset_at);
-  if (used < 0 || windowStart > now || resetAt <= now || resetAt <= windowStart) throw new Error('window');
+  if (used < 0) throw new Error('window');
+  const windowStart = daily.window_start == null ? null : timestamp(daily.window_start);
+  const resetAt = daily.reset_at == null ? null : timestamp(daily.reset_at);
+  if (resetAt === null) {
+    // Sub2API starts/restarts the usage window lazily on the first charged call.
+    // Its read-only endpoint reports effective usage 0 and the full limit before
+    // then, with no reset_at and either no start or an expired previous start.
+    const limit = amount(daily.limit);
+    if (limit <= 0 || used !== 0 || remaining !== limit || (windowStart !== null && now - windowStart < DAY_MS)) throw new Error('window');
+    return { source: 'sub2api', remaining, used, windowStart: null, resetAt: null, updated: now };
+  }
+  if (windowStart === null || windowStart > now || resetAt <= now || resetAt <= windowStart) throw new Error('window');
   return { source: 'sub2api', remaining, used, windowStart, resetAt, updated: now };
 }
 async function readJson(response) {
@@ -59,14 +69,14 @@ async function readJson(response) {
 }
 class Sub2apiQuota {
   constructor(publish, { fetch: request = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, timeoutMs = 15000 } = {}) {
-    Object.assign(this, { publish, request, now, setTimer, clearTimer, timeoutMs, generation: 0, key: '' });
+    Object.assign(this, { publish, request, now, setTimer, clearTimer, timeoutMs, generation: 0, key: '', failures: 0 });
   }
   emit(value) { this.snapshot = value; this.publish(value); }
   configure(provider, id = '') {
     const active = enabled(provider);
     const key = active ? JSON.stringify([id, provider.baseUrl, provider.apiKey]) : '';
     if (key === this.key) return;
-    this.stop(); this.key = key;
+    this.stop(); this.key = key; this.failures = 0;
     if (!active) return;
     const generation = this.generation;
     this.options = { url: usageUrl(provider.baseUrl), apiKey: provider.apiKey.trim(), generation };
@@ -90,11 +100,13 @@ class Sub2apiQuota {
       if (!response.ok) { await response.body?.cancel(); throw new Error('request'); }
       const value = project(await readJson(response), this.now());
       if (options.generation !== this.generation) return;
+      this.failures = 0;
       this.clearTimer(this.resetTimer); this.resetTimer = undefined;
       this.emit(value);
       if (value.resetAt && options.generation === this.generation) this.scheduleReset(value.resetAt, options.generation);
     } catch {
       if (options.generation === this.generation) {
+        this.failures++;
         this.emit({ source: 'sub2api', error: 'Sub2API 额度暂不可用' });
       }
     } finally {
@@ -102,7 +114,12 @@ class Sub2apiQuota {
       if (options.generation === this.generation) {
         this.inFlight = false;
         if (this.resetPending) { this.resetPending = false; void this.refresh(); }
-        else this.timer = this.setTimer(() => void this.refresh(), REFRESH_MS);
+        else {
+          // 启动时系统网络可能还没就绪，失败后按 5s、10s、20s… 快速重试，
+          // 成功后恢复 5 分钟轮询，避免要等满 5 分钟才显示额度。
+          const delay = this.failures ? Math.min(REFRESH_MS, 5000 * 2 ** (this.failures - 1)) : REFRESH_MS;
+          this.timer = this.setTimer(() => void this.refresh(), delay);
+        }
       }
     }
   }
@@ -117,7 +134,7 @@ class Sub2apiQuota {
     }, Math.min(Math.max(1, resetAt - this.now()), 2147483647));
   }
   stop() {
-    ++this.generation; this.key = ''; this.options = null;
+    ++this.generation; this.key = ''; this.options = null; this.failures = 0;
     this.clearTimer(this.timer); this.clearTimer(this.resetTimer);
     this.clearTimer(this.timeoutTimer); this.timeoutTimer = undefined;
     this.timer = this.resetTimer = undefined;

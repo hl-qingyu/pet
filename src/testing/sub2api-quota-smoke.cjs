@@ -4,7 +4,7 @@ const path = require('node:path');
 
 async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, waitFor, dataRoot, showPanel, dshAccount }) {
   const original = structuredClone(store.value), calls = [];
-  let failNext = false, holdNext = false, releaseRequest, dshCalls = 0;
+  let failNext = false, holdNext = false, releaseRequest, dshCalls = 0, unusedDaily = true, previousWindow = false;
   const originalDsh = { request: dshAccount.request, readCredentials: dshAccount.readCredentials };
   const server = http.createServer((req, res) => {
     if (req.url === '/dsh') {
@@ -21,9 +21,11 @@ async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, w
     if (req.url === '/missing/v1/usage') { res.end(JSON.stringify({ balance: 999, quota: { remaining: 999 } })); return; }
     if (req.url === '/error/v1/usage') { res.writeHead(401); res.end('{}'); return; }
     if (failNext) { failNext = false; res.writeHead(401); res.end('{}'); return; }
-    const finish = () => res.end(JSON.stringify({ isValid: true, status: 'active', rate_limits: [{ window: '1d',
-      remaining: 121.9060417, used: 28.0939583, window_start: new Date(Date.now() - 3600000).toISOString(),
-      reset_at: new Date(Date.now() + 3600000).toISOString() }] }));
+    const finish = () => res.end(JSON.stringify({ isValid: true, status: 'active', rate_limits: [unusedDaily ? {
+      window: '1d', limit: 150, used: 0, remaining: 150,
+      window_start: previousWindow ? new Date(Date.now() - 2 * 86400000).toISOString() : null,
+    } : { window: '1d', remaining: 121.9060417, used: 28.0939583,
+      window_start: new Date(Date.now() - 3600000).toISOString(), reset_at: new Date(Date.now() + 3600000).toISOString() }] }));
     if (holdNext) { holdNext = false; releaseRequest = finish; } else finish();
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -60,14 +62,20 @@ async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, w
     if (!await run(`document.querySelector('#service-source').value==='sub2api' && document.querySelector('#sub2api-quota').checked && !document.querySelector('#sub2api-quota-settings').classList.contains('hidden')`)) throw new Error('接口草稿互相覆盖');
     if (calls.length || !(await bubble()).hidden) throw new Error('未保存草稿触发了额度查询');
     await save();
-    await waitFor(async () => (await bubble()).text === '今日余额 121.91 · 已用 28.09');
+    await waitFor(async () => (await bubble()).text === '今日余额 150.00 · 已用 0.00');
     if (calls.length !== 1 || Object.values(store.value.integrations).some(value => value.enabled) || store.value.providers.custom.model) throw new Error('额度不能依赖模型或执行状态监听');
+    const clickRefresh = () => petWindow.webContents.executeJavaScript(`document.querySelector('#account-refresh').click()`);
+    previousWindow = true; await clickRefresh();
+    await waitFor(() => petWindow.webContents.executeJavaScript(`!document.querySelector('#account-refresh').disabled`));
+    if ((await bubble()).text !== '今日余额 150.00 · 已用 0.00' || calls.length !== 2) throw new Error('未开始日窗口时手动刷新应可读取日额度');
+    unusedDaily = false; await clickRefresh();
+    await waitFor(async () => (await bubble()).text === '今日余额 121.91 · 已用 28.09');
+    if (calls.some(url => !url.endsWith('/v1/usage'))) throw new Error('额度初始化不得发送模型调用');
     const layout = await petWindow.webContents.executeJavaScript(`(() => {
       const node=document.querySelector('#account-bubble'),style=getComputedStyle(node);
       return {font:style.fontSize,wrap:style.whiteSpace,clipped:node.scrollWidth>node.clientWidth};
     })()`);
     if (layout.font !== '14px' || layout.wrap !== 'nowrap' || layout.clipped) throw new Error('额度气泡布局不符合要求');
-    const clickRefresh = () => petWindow.webContents.executeJavaScript(`document.querySelector('#account-refresh').click()`);
     failNext = true; await clickRefresh();
     await waitFor(async () => (await bubble()).text === 'Sub2API 额度暂不可用');
     holdNext = true; releaseRequest = null; await clickRefresh();
@@ -139,6 +147,7 @@ async function smokeSub2apiQuota({ store, applyConfig, panelWindow, petWindow, w
     if (dshCalls !== 2) throw new Error('DSH 关闭后仍可刷新');
     return { sub2apiSavedProviderDrafts: true, sourceGuards: true, independentOfModelAndObservers: true,
       quotaFormattingAndLayout: true, unsupportedAndError: true, providerSwitch: true, animationIsolation: true,
+      unusedDailyStartup: true, unusedDailyManualRefresh: true, noInferenceWarmup: true,
       sub2apiManualRetry: true, dshManualRefresh: true, refreshSourceIsolation: true, refreshSingleFlight: true, pass: true };
   } finally {
     dshAccount.stop(); Object.assign(dshAccount, originalDsh);

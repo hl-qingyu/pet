@@ -352,7 +352,7 @@ function setupIPC() {
     } catch (error) {
       const message = userError(error, Object.values(config.providers).map(p => p.apiKey));
       broadcast('chat:error', { id, message }); status(controller.signal.aborted ? 'idle' : 'failed', message.length > 90 ? message.slice(0, 90) + '…' : message, petState.enabled ? 3200 : 0);
-    } finally { clearTimeout(timeout); request = null; petState.refresh(); broadcast('chat:idle', { id }); }
+    } finally { clearTimeout(timeout); request = null; petState.refresh(); broadcast('chat:idle', { id }); if (providerSource(provider) === 'sub2api') void sub2apiQuota.refresh(); }
     return { id };
   });
   handle('chat:stop', () => request?.controller.abort(new Error('已停止生成。')));
@@ -402,6 +402,9 @@ function createWindows() {
   // Updates arriving after bootstrap but before load finishes were skipped by
   // send(). Replay the current view even when the observer state has not changed.
   petWindow.webContents.on('did-finish-load', syncPet);
+  // isLoading() can still be true during did-finish-load. Replay again after
+  // loading actually stops so early quota and execution updates are delivered.
+  petWindow.webContents.on('did-stop-loading', syncPet);
   disposePetRecovery = require('./pet-recovery.cjs').attachPetRecovery(petWindow, { isQuitting: () => quitting, log,
     onCrash: () => { dragOrigin = null; petWindow.setIgnoreMouseEvents(false); }, onRecovered: restorePetLevel });
   if (process.platform === 'darwin') petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });

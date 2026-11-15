@@ -46,6 +46,62 @@ test('projection uses only validated raw daily amounts and server window, with n
   const zero = sample(); zero.rate_limits[0].remaining = 0; zero.rate_limits[0].used = 150;
   assert.equal(project(zero, now).remaining, 0);
 });
+
+const unused = (windowStart = null) => ({ mode: 'quota_limited', isValid: true, status: 'active',
+  rate_limits: [{ window: '1d', limit: 150, used: 0, remaining: 150, window_start: windowStart }] });
+
+test('daily quota is available before the first charged call even when the service has not started a window', () => {
+  for (const start of [undefined, null, new Date(now - 86400000).toISOString(), new Date(now - 3 * 86400000).toISOString()]) {
+    const result = project(unused(start), now);
+    assert.deepEqual(result, { source: 'sub2api', remaining: 150, used: 0, windowStart: null, resetAt: null, updated: now });
+    const data = unused(start); data.rate_limits[0].reset_at = null;
+    assert.deepEqual(project(data, now), result);
+  }
+});
+
+test('missing reset information never turns partial usage or malformed windows into a full daily allowance', () => {
+  for (const patch of [
+    { used: 1, remaining: 149 }, { remaining: 149 }, { remaining: 151 }, { used: -1 },
+    { limit: null }, { limit: 0 }, { limit: -1 }, { limit: undefined },
+    { window_start: new Date(now - 1000).toISOString() }, { window_start: new Date(now + 1000).toISOString() },
+    { window_start: 'bad' }, { reset_at: 'bad' }, { reset_at: new Date(now - 1000).toISOString() },
+    { reset_at: new Date(now + 3600000).toISOString() },
+  ]) {
+    const data = unused(); Object.assign(data.rate_limits[0], patch);
+    assert.throws(() => project(data, now), JSON.stringify(patch));
+  }
+});
+
+test('startup and manual refresh read unused daily quota without sending any inference request', async () => {
+  const time = clock(), updates = [], requests = [];
+  const monitor = new Sub2apiQuota(v => updates.push(v), { ...time, fetch: async (url, options) => {
+    requests.push({ url, method: options.method }); return Response.json(unused());
+  } });
+  monitor.configure(provider); await flush();
+  assert.equal(updates.at(-1).remaining, 150); assert.equal(updates.at(-1).used, 0);
+  assert.equal(monitor.resetTimer, undefined); assert.equal(time.timers.size, 1);
+  await monitor.refresh(); assert.equal(updates.at(-1).remaining, 150);
+  await time.advance(300000); assert.equal(requests.length, 3);
+  assert.ok(requests.every(r => r.url === 'https://gateway.test/v1/usage' && r.method === 'GET'));
+  monitor.stop(); assert.equal(time.timers.size, 0);
+});
+
+test('a reset can return an unused day and later switch back to a timed window', async () => {
+  const time = clock(), updates = []; let calls = 0;
+  const monitor = new Sub2apiQuota(v => updates.push(v), { ...time, fetch: async () => {
+    calls++;
+    if (calls === 1) {
+      const data = sample(); data.rate_limits[0].reset_at = new Date(now + 1000).toISOString(); return Response.json(data);
+    }
+    if (calls === 2) return Response.json(unused(new Date(now - 86400000).toISOString()));
+    return Response.json(sample(time.now()));
+  } });
+  monitor.configure(provider); await flush(); await time.advance(1000);
+  assert.equal(calls, 2); assert.equal(updates.at(-1).remaining, 150); assert.equal(updates.at(-1).used, 0);
+  assert.equal(monitor.resetTimer, undefined);
+  await monitor.refresh(); assert.equal(calls, 3); assert.equal(updates.at(-1).used, 28.0939583);
+  assert.ok(monitor.resetTimer); monitor.stop(); assert.equal(time.timers.size, 0);
+});
 test('nulls, blank or nonfinite amounts, ambiguous windows, invalid accounts and expired windows fail closed', () => {
   for (const field of ['remaining', 'used']) for (const value of [null, undefined, '', ' ', true, [], 'oops', Infinity, NaN, 'Infinity']) {
     const data = sample(); data.rate_limits[0][field] = value; assert.throws(() => project(data, now));
@@ -88,6 +144,24 @@ test('refresh starts immediately, reconfiguration is idempotent, polling is 5 mi
   monitor.configure({ ...provider, apiKey: 'changed' }, 'a'); await flush();
   assert.equal(updates.at(-1).error, 'Sub2API 额度暂不可用'); // mock checks the original auth only
   monitor.stop(); assert.equal(time.timers.size, 0); assert.equal(updates.at(-1), null);
+});
+test('startup failures retry with backoff, then resume the regular five-minute poll', async () => {
+  const time = clock(), updates = [];
+  let calls = 0;
+  const monitor = new Sub2apiQuota(v => updates.push(v), { ...time, fetch: async () => {
+    calls++;
+    if (calls <= 3) return new Response('{}', { status: 500 });
+    return Response.json(sample(time.now()));
+  } });
+  monitor.configure(provider); await flush();
+  assert.equal(calls, 1); assert.ok(updates.at(-1).error);
+  await time.advance(5000); assert.equal(calls, 2);
+  await time.advance(10000); assert.equal(calls, 3);
+  await time.advance(20000); assert.equal(calls, 4);
+  assert.equal(updates.at(-1).remaining, 121.9060417);
+  await time.advance(299999); assert.equal(calls, 4);
+  await time.advance(1); assert.equal(calls, 5);
+  monitor.stop();
 });
 test('switching key/provider or disabling aborts requests and ignores late results', async () => {
   const pending = [], updates = [], time = clock();

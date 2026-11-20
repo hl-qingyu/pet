@@ -413,3 +413,11 @@ test('out-of-workspace approvals cannot override an in-workspace running task', 
   await until(() => f.observer.sessions.get('local:outside')?.summary);
   assert.equal(f.observer.snapshot().state, 'running'); assert.equal(f.observer.snapshot().info.count, 1);
 });
+
+test('desktop v13 snapshots and patches retain running and approval states',async t=>{
+ const f=await fixture(t);f.observer.start();await until(()=>f.observer.snapshot().state==='running');
+ f.send({type:'broadcast',method:'thread-stream-state-changed',sourceClientId:'owner-id',version:13,params:{hostId:'local',conversationId:'conversation-a',change:{type:'snapshot',revision:10,conversationState:state()}}});
+ await until(()=>f.observer.sessions.get('local:conversation-a').revision===10);
+ f.send({type:'broadcast',method:'thread-stream-state-changed',sourceClientId:'owner-id',version:13,params:{hostId:'local',conversationId:'conversation-a',change:{type:'patches',baseRevision:10,revision:11,patches:[{op:'replace',path:['requests'],value:[{id:'approval',method:'item/tool/requestUserInput'}]}]}}});
+ await until(()=>f.observer.snapshot().state==='waiting');assert.equal(f.observer.snapshot().info.degraded,false);
+});

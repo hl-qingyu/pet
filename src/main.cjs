@@ -72,6 +72,9 @@ function syncPet() {
 }
 function status(state, bubble, resetMs = 0) { petState.local(state, bubble, resetMs); }
 function refreshExternal() {
+  const desktopIpc = openaiStatus.sources.get('openai')?.info;
+  const desktopLogs = openaiStatus.sources.get('desktopLogs')?.info;
+  if (desktopIpc || desktopLogs) runtime.openai = desktopLogs?.count && !desktopIpc?.count ? desktopLogs : desktopIpc || desktopLogs;
   const combined = openaiStatus.snapshot();
   runtime.openaiSummary = { ...combined.info, message: selectedIntegration(store.value) !== 'openai' ? '' :
     store.value.integrations.openai.enabled || store.value.integrations.codexCli.enabled ? combined.info.message : '未开启监听' };
@@ -88,8 +91,10 @@ function applyIntegration() {
   sub2apiQuota.configure(provider, store.value.chat.provider);
   publishAccount();
   const pending = [], stops = [];
-  for (const id of ['dsh', 'openai', 'codexCli']) {
-    const options = integrations[id], appropriate = (selected === 'dsh') === (id === 'dsh');
+  for (const id of ['dsh', 'openai', 'desktopLogs', 'codexCli']) {
+    const options = id === 'desktopLogs' ? { ...integrations.openai, desktop: true,
+      ...(smoke ? { sessionsRoot: path.join(dataRoot, 'desktop-log-fixture') } : {}) } : integrations[id];
+    const appropriate = (selected === 'dsh') === (id === 'dsh');
     const enabled = appropriate && options.enabled && (id !== 'dsh' || hasApi);
     const key = enabled ? JSON.stringify(options) : '';
     const previous = integrationSlots.get(id);
@@ -100,7 +105,7 @@ function applyIntegration() {
     const slot = { key, observer: null }; integrationSlots.set(id, slot);
     if (previous?.observer) stops.push(previous.observer.stop());
     if (id === 'dsh') { dshObserver = null; dshSnapshot = { state: 'idle' }; }
-    else { openaiStatus.clear(id); if (id === 'openai') openaiObserver = null; else cliObserver = null; }
+    else { openaiStatus.clear(id); if (id === 'openai') openaiObserver = null; else if (id === 'codexCli') cliObserver = null; }
     if (!enabled) continue;
     runtime[id] = { count: 0, degraded: false, message: id === 'dsh' ? '等待 DSH 会话……' : id === 'openai' ?
       '等待 ChatGPT 桌面端连接……' : '等待 CLI 会话日志……' };
@@ -121,14 +126,14 @@ function applyIntegration() {
         slot.diagnostic = diagnostic;
         log(`Integration update: source=${id} state=${snapshot.state} count=${snapshot.info.count} degraded=${snapshot.info.degraded === true}`);
       }
-      const before = JSON.stringify([runtime[id], runtime.openaiSummary]);
+      const before = JSON.stringify([runtime[id], runtime.openai, runtime.openaiSummary]);
       runtime[id] = snapshot.info;
       if (id === 'dsh') dshSnapshot = snapshot; else openaiStatus.update(id, snapshot);
       refreshExternal();
-      if (before !== JSON.stringify([runtime[id], runtime.openaiSummary])) broadcast('runtime:updated', runtime);
+      if (before !== JSON.stringify([runtime[id], runtime.openai, runtime.openaiSummary])) broadcast('runtime:updated', runtime);
     });
     slot.observer = observer;
-    if (id === 'dsh') dshObserver = observer; else if (id === 'openai') openaiObserver = observer; else cliObserver = observer;
+    if (id === 'dsh') dshObserver = observer; else if (id === 'openai') openaiObserver = observer; else if (id === 'codexCli') cliObserver = observer;
     observer.start();
   }).catch(() => {
     if (quitting || integrationSlots.get(id) !== slot) return;
@@ -791,5 +796,5 @@ if (ownLock) app.whenReady().then(async () => {
   }
 });
 app.on('window-all-closed', () => {});
-app.on('before-quit', () => { diagnostics?.quitting(); quitting = true; disposePetRecovery?.(); dshAccount.stop(); sub2apiQuota.stop(); dshObserver?.stop(); openaiObserver?.stop(); cliObserver?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
+app.on('before-quit', () => { diagnostics?.quitting(); quitting = true; disposePetRecovery?.(); dshAccount.stop(); sub2apiQuota.stop(); for (const slot of integrationSlots.values()) slot.observer?.stop(); petState.dispose(); request?.controller.abort(new Error('程序已退出')); });
 app.on('will-quit', () => { clearInterval(cursorTimer); clearInterval(idleTimer); clearTimeout(positionTimer); clearTimeout(shortcutRecordingTimer); unwatch?.(); globalShortcut.unregisterAll(); tray?.destroy(); });

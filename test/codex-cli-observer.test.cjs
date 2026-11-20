@@ -21,6 +21,21 @@ async function fixture(t, source = 'cli', options = {}, metadata = {}) {
   return { observer, root, file, cwd, updates, at: () => now, advance: ms => { now += ms; }, append: value => fs.appendFileSync(file, line(value)) };
 }
 
+test('desktop log mode reads desktop turns without a broadcast protocol version', async t => {
+  const metadata = { originator: 'Codex Desktop', thread_source: 'user' };
+  const desktop = await fixture(t, 'vscode', { desktop: true }, metadata);
+  const cli = await fixture(t, 'vscode', {}, metadata);
+  await desktop.observer.run();
+  await cli.observer.run();
+  assert.equal(cli.observer.snapshot().sessions.length, 0);
+  assert.equal(desktop.observer.snapshot().state, 'running');
+  assert.match(desktop.observer.snapshot().bubble, /桌面端/);
+  desktop.advance(50);
+  desktop.append(event('task_complete', desktop.at()));
+  await desktop.observer.run();
+  assert.equal(desktop.observer.snapshot().state, 'review');
+});
+
 test('CLI config migration preserves desktop selection and supports all four combinations', () => {
   const old = structuredClone(defaults); delete old.integrations.codexCli; old.integrations.openai.enabled = true;
   const next = migrate(old);

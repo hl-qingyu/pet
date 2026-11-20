@@ -324,7 +324,9 @@ class OpenaiObserver {
       if (safeId(message.sourceClientId)) this.discover(p, message.sourceClientId);
       return;
     }
-    if (message.version !== 11) { this.fault(message); return; }
+    // v13 retains the projected runtime/turn/approval layout verified against
+    // the local desktop stream. Keep rejecting other, unverified versions.
+    if (![11, 13].includes(message.version)) { this.fault(message); return; }
     try {
       const change = p.change;
       if (!Number.isSafeInteger(change?.revision) || change.revision < 0) throw new Error('revision');

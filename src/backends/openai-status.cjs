@@ -1,10 +1,13 @@
 const RANK = { idle: 0, review: 1, failed: 2, running: 3, waiting: 4 };
 const active = session => ['running', 'waiting'].includes(session.state);
 function prefer(candidate, previous) {
+  if (candidate.source !== 'openai' && previous.source !== 'openai') {
+    return candidate.at !== previous.at ? candidate.at > previous.at : RANK[candidate.state] > RANK[previous.state];
+  }
   if (previous.turnId && candidate.turnId && previous.turnId !== candidate.turnId) {
     if (previous.startedAt && candidate.startedAt && previous.startedAt !== candidate.startedAt) return candidate.startedAt > previous.startedAt;
     const desktop = candidate.source === 'openai' ? candidate : previous;
-    const cli = candidate.source === 'codexCli' ? candidate : previous;
+    const cli = candidate.source !== 'openai' ? candidate : previous;
     // A bounded CLI tail may contain activity without its task_started record.
     // Actual desktop turn timestamps can still prove that the CLI turn is older.
     if (cli.at && desktop.startedAt > cli.at) return candidate === desktop;
@@ -38,7 +41,7 @@ class OpenaiStatus {
       const key = JSON.stringify([session.hostId, session.id]);
       const candidate = { ...session, source }, previous = sessions.get(key);
       // A disconnect must not resurrect a CLI start already observed as settled.
-      if (source === 'codexCli' && candidate.state === 'running' && candidate.turnId && candidate.turnId === this.settled.get(key)?.turnId) {
+      if (source !== 'openai' && candidate.state === 'running' && candidate.turnId && candidate.turnId === this.settled.get(key)?.turnId) {
         candidate.state = 'idle'; candidate.bubble = undefined;
       }
       if (!previous) { sessions.set(key, candidate); continue; }

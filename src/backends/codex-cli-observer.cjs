@@ -14,7 +14,9 @@ const WORDS = { running: 'Codex CLI 正在处理……', review: '这一步完�
 const safeId = value => typeof value === 'string' && /^[\w:./-]{1,128}$/.test(value);
 const timeOf = value => typeof value === 'number' && Number.isFinite(value) ? (value < 1e12 ? value * 1000 : value) : Date.parse(value);
 const projection = () => new JsonMetadata({ keys: KEYS, maxNodes: 128 });
-function supportedSource(meta) {
+function supportedSource(meta, desktop) {
+  if (desktop) return /^codex desktop$/i.test(meta?.originator || '') &&
+    (meta.thread_source === 'user' || (meta.thread_source == null && ['app', 'vscode'].includes(meta.source)));
   if (['cli', 'exec'].includes(meta?.source)) return true;
   // The local Codex TUI host labels its user sessions "vscode" in 0.167.0.
   // Require both host and thread kind; unrelated editor/subagent logs stay excluded.
@@ -140,7 +142,7 @@ class CodexCliObserver {
       const stat = await handle.stat();
       if (!stat.isFile()) return null;
       const head = await this.head(handle), meta = head?.payload;
-      if (head?.type !== 'session_meta' || !supportedSource(meta)) return null;
+      if (head?.type !== 'session_meta' || !supportedSource(meta, this.options.desktop)) return null;
       if (!safeId(meta.id) || typeof meta.cwd !== 'string' || !path.isAbsolute(meta.cwd)) throw new Error('metadata-layout');
       const session = { file, id: meta.id, hostId: 'local', summary: { cwd: meta.cwd }, turnId: null,
         startedAt: 0, state: 'idle', at: 0, problem: false, offset: 0, size: stat.size, mtime: stat.mtimeMs,
@@ -246,6 +248,8 @@ class CodexCliObserver {
     } finally { await handle.close(); }
   }
   snapshot(now = this.now()) {
+    const label = this.options.desktop ? 'Codex 桌面端' : 'CLI';
+    const words = this.options.desktop ? { ...WORDS, running: 'Codex 桌面端正在处理……' } : WORDS;
     const sessions = [];
     let state = 'idle', at = 0, degraded = Boolean(this.discoveryProblem), expired = false;
     for (const session of this.sessions.values()) {
@@ -256,15 +260,16 @@ class CodexCliObserver {
       if (candidate === 'review' && age >= 4000) candidate = 'idle';
       sessions.push({ hostId: 'local', id: session.id, turnId: session.turnId, startedAt: session.startedAt,
         state: candidate, at: session.at, settled: session.finished === true,
-        bubble: this.options.showBubble ? WORDS[candidate] : undefined });
+        bubble: this.options.showBubble ? words[candidate] : undefined });
       if ((candidate === 'running' && state !== 'running') || (candidate === 'review' && state === 'idle') || (candidate === state && session.at > at)) {
         state = candidate; at = session.at;
       }
     }
     degraded ||= expired;
-    return { state, bubble: this.options.showBubble ? WORDS[state] : undefined, sessions,
-      info: { count: sessions.length, degraded, message: this.discoveryProblem || (degraded ? 'CLI 状态读取降级：日志损坏或状态已过期' :
-        sessions.length ? `正在监听 ${sessions.length} 个 CLI 会话（日志模式）` : '等待 CLI 会话日志……') } };
+    return { state, bubble: this.options.showBubble ? words[state] : undefined, sessions,
+      info: { count: sessions.length, degraded, message: (this.options.desktop ? this.discoveryProblem.replaceAll('CLI', label) : this.discoveryProblem) ||
+        (degraded ? `${label} 状态读取降级：日志损坏或状态已过期` :
+          sessions.length ? `正在监听 ${sessions.length} 个 ${label} 会话（日志模式）` : `等待 ${label} 会话日志……`) } };
   }
   publish() {
     if (!this.active) return;

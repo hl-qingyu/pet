@@ -36,6 +36,24 @@ test('desktop log mode reads desktop turns without a broadcast protocol version'
   assert.equal(desktop.observer.snapshot().state, 'review');
 });
 
+test('resumed desktop history is found through file changes before the next scan', async t => {
+  const f = await fixture(t, 'vscode', { desktop: true }, { originator: 'Codex Desktop', thread_source: 'user' });
+  f.advance(LIMITS.retentionMs + 1000);
+  await f.observer.run();
+  assert.equal(f.observer.snapshot().state, 'idle');
+  assert.ok(f.observer.watcher);
+  f.observer.scanner = f.observer.recentScanner = null;
+  f.observer.nextDiscovery = f.observer.nextRecentDiscovery = Infinity;
+  f.append(event('task_started', f.at(), 'resumed'));
+  for (let i = 0; i < 100 && !f.observer.changed.has(f.file); i++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.ok(f.observer.changed.has(f.file));
+  await f.observer.run();
+  assert.equal(f.observer.snapshot().state, 'running');
+  assert.equal(f.observer.snapshot().sessions[0].turnId, 'resumed');
+});
+
 test('CLI config migration preserves desktop selection and supports all four combinations', () => {
   const old = structuredClone(defaults); delete old.integrations.codexCli; old.integrations.openai.enabled = true;
   const next = migrate(old);

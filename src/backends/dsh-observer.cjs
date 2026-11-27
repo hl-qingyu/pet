@@ -137,13 +137,13 @@ class DshObserver {
   async discover(now) {
     this.nextDiscovery = now + LIMITS.discoverMs; this.discoveryProblem = '';
     try {
-      const workspaces = await fs.promises.opendir(this.root);
-      for await (const workspace of workspaces) {
+      const workspaces = await fs.promises.readdir(this.root, { withFileTypes: true });
+      for (const workspace of workspaces) {
         if (!this.active) break;
         if (!workspace.isDirectory()) continue;
         try {
-          const children = await fs.promises.opendir(path.join(this.root, workspace.name));
-          for await (const child of children) {
+          const children = await fs.promises.readdir(path.join(this.root, workspace.name), { withFileTypes: true });
+          for (const child of children) {
             if (!this.active) break;
             if (!child.isDirectory()) continue;
             const file = path.join(this.root, workspace.name, child.name, 'session.v4.jsonl.zstd');

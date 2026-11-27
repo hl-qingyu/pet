@@ -38,6 +38,9 @@
     ],
     "asar": true,
     "win": {
+      "extraResources": [
+        { "from": "scripts/windows-crash-recovery.ps1", "to": "windows-crash-recovery.ps1" }
+      ],
       "target": [
         "dir"
       ],

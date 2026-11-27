@@ -71,8 +71,10 @@ function applyEvent(session, event, now, bootstrap = false) {
 
 const identityOf = stat => `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
 async function* filesIn(directory, depth = 0, maxDepth = 3) {
-  const dirs = [], entries = await fs.promises.opendir(directory);
-  for await (const entry of entries) {
+  // Read one directory at a time. Electron 45.2.3 on Windows has crashed
+  // in node::fs_dir::DirHandle::New when completing an async opendir.
+  const dirs = [], entries = await fs.promises.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
     if (entry.isFile() && /^rollout-.*\.jsonl$/.test(entry.name)) yield path.join(directory, entry.name);
     else if (entry.isDirectory() && depth < maxDepth) {
       if (dirs.length >= 512) throw new Error('directory-limit');
@@ -102,7 +104,7 @@ class CodexCliObserver {
     this.options = { workspace: '', sessionsRoot: '', showBubble: true, pollMs: 500, activeSeconds: 600, ...options };
     this.root = this.options.sessionsRoot || path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
     Object.assign(this, { onUpdate, now, sessions: new Map(), excluded: new Map(), active: false,
-      nextDiscovery: 0, nextRecentDiscovery: 0, last: '', discoveryProblem: '' });
+      nextDiscovery: 0, nextRecentDiscovery: 0, last: '', discoveryProblem: '', changed: new Set(), nextWatch: 0 });
   }
   start() {
     if (this.active) return;
@@ -110,6 +112,7 @@ class CodexCliObserver {
   }
   async stop() {
     this.active = false; clearTimeout(this.timer); this.timer = null;
+    this.watcher?.close(); this.watcher = null; this.changed.clear();
     await this.inflight;
     await this.scanner?.return(); await this.recentScanner?.return();
     this.scanner = this.recentScanner = null; this.sessions.clear(); this.excluded.clear();
@@ -122,6 +125,41 @@ class CodexCliObserver {
     }).finally(() => {
       if (this.active) { this.timer = setTimeout(() => this.tick(), this.options.pollMs); this.timer.unref?.(); }
     });
+  }
+  watchDesktopLogs(now) {
+    if (!this.options.desktop || this.watcher || now < this.nextWatch) return;
+    this.nextWatch = now + LIMITS.discoverMs;
+    try {
+      const watcher = fs.watch(this.root, { recursive: true, persistent: false }, (_event, name) => {
+        if (!this.active || !name || !/^rollout-.*\.jsonl$/.test(path.basename(name))) return;
+        const file = path.resolve(this.root, name);
+        if (!matchesWorkspace({ hostId: 'local', summary: { cwd: file } }, this.root)) return;
+        if (this.changed.size < 256) this.changed.add(file);
+      });
+      this.watcher = watcher;
+      watcher.on('error', () => { watcher.close(); if (this.watcher === watcher) this.watcher = null; });
+    } catch { /* The regular scan also handles missing directories and unsupported watches. */ }
+  }
+  async discoverChanged(now) {
+    for (const file of [...this.changed].slice(0, 8)) {
+      this.changed.delete(file);
+      if (!this.active || this.sessions.has(file)) continue;
+      try {
+        const session = await this.initialize(file, now);
+        if (session && this.active) this.track(session, now);
+      } catch { /* Files can disappear or be incomplete while Codex writes them. */ }
+    }
+  }
+  track(session, now) {
+    if (this.sessions.size >= LIMITS.sessions) {
+      this.discoveryProblem = 'CLI 会话数量超过资源上限';
+      const oldest = [...this.sessions.values()].reduce((a, b) => a.at < b.at ? a : b);
+      if (oldest.at >= session.at) { this.rememberExcluded(session.file, session, now, 'capacity'); return; }
+      this.rememberExcluded(oldest.file, oldest, now, 'capacity');
+      this.sessions.delete(oldest.file);
+    }
+    this.excluded.delete(session.file);
+    this.sessions.set(session.file, session);
   }
   invalidate(session) { session.problem = true; session.state = 'idle'; }
   async head(handle) {
@@ -204,14 +242,7 @@ class CodexCliObserver {
         }
         if (!this.active) return;
         if (!session) { this.rememberExcluded(next.value, stat, now); continue; }
-        if (this.sessions.size >= LIMITS.sessions) {
-          this.discoveryProblem = 'CLI 会话数量超过资源上限';
-          const oldest = [...this.sessions.values()].reduce((a, b) => a.at < b.at ? a : b);
-          if (oldest.at >= session.at) { this.rememberExcluded(next.value, stat, now, 'capacity'); continue; }
-          this.rememberExcluded(oldest.file, oldest, now, 'capacity');
-          this.sessions.delete(oldest.file);
-        }
-        this.sessions.set(session.file, session);
+        this.track(session, now);
       }
     } catch (error) {
       await this.scanner?.return(); await this.recentScanner?.return(); this.scanner = this.recentScanner = null;
@@ -277,6 +308,8 @@ class CodexCliObserver {
     if (signature !== this.last) { this.last = signature; this.onUpdate(snapshot); }
   }
   async run() {
+    this.watchDesktopLogs(this.now());
+    await this.discoverChanged(this.now());
     await this.discover(this.now());
     for (const session of this.sessions.values()) {
       if (!this.active) return;

@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, globalShortcut, screen, shell, dialog, powerMonitor, crashReporter } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { ConfigStore, atomicWrite } = require('./config.cjs');
 const { History } = require('./history.cjs');
@@ -19,6 +19,8 @@ const defaultRoot = app.isPackaged ? (process.platform === 'win32' ? path.dirnam
 const configPath = path.resolve(customConfig || path.join(defaultRoot, 'config.json'));
 const dataRoot = path.join(path.dirname(configPath), 'data');
 const smoke = process.argv.includes('--smoke-test');
+const recoveryCount = Math.min(2, Math.max(0, Number.parseInt(process.env.DRAGONDESK_CRASH_RECOVERY_COUNT, 10) || 0));
+delete process.env.DRAGONDESK_CRASH_RECOVERY_COUNT;
 fs.mkdirSync(path.join(dataRoot, 'electron'), { recursive: true });
 fs.mkdirSync(path.join(dataRoot, 'logs'), { recursive: true });
 app.setPath('userData', path.join(dataRoot, 'electron'));
@@ -785,6 +787,17 @@ if (ownLock) app.whenReady().then(async () => {
     powerMonitor.on('unlock-screen', restorePetLevel);
     screen.on('display-removed', () => { const p = clampPoint(petWindow.getBounds(), petSize()); petWindow.setPosition(p.x, p.y); });
     log('DragonDesk started. API-only runtime.');
+    if (recoveryCount) log(`Windows crash recovery restarted DragonDesk: attempt=${recoveryCount}`);
+    if (process.platform === 'win32' && app.isPackaged && !smoke) {
+      const helper = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(process.resourcesPath, 'windows-crash-recovery.ps1'),
+        '-PetPid', String(process.pid), '-Executable', process.execPath, '-Config', configPath, '-RecoveryCount', String(recoveryCount),
+      ], { windowsHide: true, stdio: 'ignore' });
+      helper.on('spawn', () => log(`Windows crash recovery watching: pid=${helper.pid}`));
+      helper.on('error', () => log('Windows crash recovery helper could not start'));
+      helper.on('exit', code => { if (code) log(`Windows crash recovery helper exited: code=${code}`); });
+      helper.unref();
+    }
     if (smoke) {
       await Promise.all([new Promise(resolve => petWindow.webContents.once('did-finish-load', resolve)), new Promise(resolve => panelWindow.webContents.once('did-finish-load', resolve))]);
       await new Promise(resolve => setTimeout(resolve, 1000)); await smokeTest();

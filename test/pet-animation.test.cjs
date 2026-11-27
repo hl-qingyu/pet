@@ -95,7 +95,7 @@ test('dragon working animation retains its cadence and receives no whale frame c
 
 test('low balance plays sleep animation and clearing it restores idle; dragon remains unaffected',async()=>{
  const app=await renderer();app.account({insufficient:true});assert.equal(app.tick(0),'0px -1248px');
- app.sprite.events.pointerenter();assert.equal(app.tick(300),'0px -832px');
+ app.sprite.events.pointerenter();assert.equal(app.tick(300),'-192px -1248px');
  app.sprite.events.pointerleave();app.account({insufficient:false});assert.equal(app.tick(301),'0px 0px');
  app.account({error:'unavailable'});assert.equal(app.tick(302),'0px 0px');
  const dragon=await renderer('gpt-codex');dragon.account({insufficient:true});assert.equal(dragon.tick(0),'0px 0px');
@@ -123,3 +123,4 @@ test('zero balance plays failure once then freezes and blocks other animations u
  app.account({error:'unavailable'});assert.equal(app.tick(6000),'-1344px -1040px');
  app.account({depleted:false,insufficient:false});assert.equal(app.tick(6500),'0px -1456px');
 });
+

@@ -49,17 +49,17 @@ function animate(t) {
     requestAnimationFrame(animate); return;
   }
   if (hoverJumpEnd && t >= hoverJumpEnd) hoverJumpDone = true;
-  const exhausted = accountInsufficient && document.documentElement.dataset.theme === 'whale' && state === 'idle' && (!hover || hoverJumpDone);
+  const exhausted = accountInsufficient && document.documentElement.dataset.theme === 'whale' && state === 'idle';
   if (drag && moved) { /* drag decides the row */ }
   else if (exhausted) choose('waiting');
-  else if (hover && !hoverJumpDone && state === 'idle') choose('jumping');
+  else if (hover && !hoverJumpDone && state === 'idle' && !(document.documentElement.dataset.theme === 'whale' && row === 6)) choose('jumping');
   else choose(state);
   if (!exhausted && !hover && !drag && state === 'idle' && config?.pet.followMouse && direction !== null) cell(9 + Math.floor(direction/8),direction%8);
   else if (t >= next) {
     const durations = window.petMotion.durations(document.documentElement.dataset.theme,row);
     cell(row,frame); next = t + durations[frame];
     if (row === 4 && frame === durations.length-1 && hover && state === 'idle' && document.documentElement.dataset.theme === 'whale') hoverJumpEnd = next;
-    frame = (frame+1) % durations.length;
+    frame = row === 6 && document.documentElement.dataset.theme === 'whale' ? (frame === durations.length - 1 ? durations.length - 2 : frame + 1) : (frame+1) % durations.length;
   }
   requestAnimationFrame(animate);
 }
@@ -144,5 +144,8 @@ document.querySelector('#account-refresh').onclick = async () => {
     }
   }
 };
+
+
+
 
 

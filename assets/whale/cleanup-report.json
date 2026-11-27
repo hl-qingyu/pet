@@ -2,7 +2,7 @@
   "source": "https://github.com/gmskywalker/deepseek-fat-fish-codex-pet",
   "standard_rows": "0-8 replaced from source",
   "look_rows": "9-10 normalized to 184px visible height, centered, baseline 203",
-  "output_sha256": "003b0573154efa095aed4784b0df46fb8d735f125f9165386815439205521dca",
+  "output_sha256": "dd00c34c97b75b9f9ca172532719a7dda65ac0cd376ea07c5af2860bf3bd6d71",
   "look_normalization": [
     {
       "direction": 0,
@@ -163,6 +163,32 @@
         203
       ],
       "scale": 1.005464480874317
+    }
+  ],
+  "sleep_normalization": [
+    {
+      "frame": 0,
+      "scale": 0.9292929292929293
+    },
+    {
+      "frame": 1,
+      "scale": 0.9292929292929293
+    },
+    {
+      "frame": 2,
+      "scale": 0.9292929292929293
+    },
+    {
+      "frame": 3,
+      "scale": 0.7434343434343434
+    },
+    {
+      "frame": 4,
+      "scale": 0.7434343434343434
+    },
+    {
+      "frame": 5,
+      "scale": 0.7434343434343434
     }
   ]
 }
